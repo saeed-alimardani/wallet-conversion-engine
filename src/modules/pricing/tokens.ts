@@ -1,0 +1,2 @@
+export const QUOTE_REPOSITORY = Symbol('QUOTE_REPOSITORY');
+export const PRICING_PROVIDER = Symbol('PRICING_PROVIDER');

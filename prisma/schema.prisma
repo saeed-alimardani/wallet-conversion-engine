@@ -1,0 +1,128 @@
+// Prisma schema (grows one bounded context per feature).
+//
+// Quote, Conversion, and Outbox tables land in Features 2/3/4 — this keeps schema
+// changes reviewable per feature instead of one large upfront migration that outruns
+// the code using it.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Wallet bounded context (Feature 1).
+//
+// One row per (userId, asset) pair. `balance`, `available`, and `reserved` are stored as
+// NUMERIC (arbitrary precision, never float) and always satisfy `available + reserved =
+// balance` — enforced in-memory by the WalletAccount aggregate and, for the reserve path
+// specifically, by a single conditional UPDATE at the database level so concurrent
+// requests cannot both pass an in-memory check before either write lands
+// (see docs/DECISIONS.md).
+model WalletAccount {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  asset     String
+  balance   Decimal  @db.Decimal(38, 18)
+  available Decimal  @db.Decimal(38, 18)
+  reserved  Decimal  @db.Decimal(38, 18)
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@unique([userId, asset])
+  @@map("wallet_accounts")
+}
+
+// Pricing bounded context (Feature 2).
+//
+// Short-lived quotes (20s TTL). Status is persisted as ACTIVE or ACCEPTED only;
+// EXPIRED is derived at read time when now > expiresAt and status is still ACTIVE.
+// acceptedAt is set on successful accept (Feature 3 orchestration).
+model Quote {
+  id            String    @id
+  userId        String    @map("user_id")
+  sourceAsset   String    @map("source_asset")
+  targetAsset   String    @map("target_asset")
+  sourceAmount  Decimal   @db.Decimal(38, 18) @map("source_amount")
+  targetAmount  Decimal   @db.Decimal(38, 18) @map("target_amount")
+  rate          Decimal   @db.Decimal(38, 18)
+  status        String
+  createdAt     DateTime  @map("created_at")
+  expiresAt     DateTime  @map("expires_at")
+  acceptedAt    DateTime? @map("accepted_at")
+
+  @@index([userId])
+  @@map("quotes")
+}
+
+// Conversion bounded context (Feature 3).
+//
+// Lifecycle aggregate only. Wallet mutations are coordinated in the accept/settle
+// application services, never owned by this row.
+model Conversion {
+  id                  String    @id
+  quoteId             String    @map("quote_id")
+  userId              String    @map("user_id")
+  sourceAsset         String    @map("source_asset")
+  targetAsset         String    @map("target_asset")
+  sourceAmount        Decimal   @db.Decimal(38, 18) @map("source_amount")
+  targetAmount        Decimal   @db.Decimal(38, 18) @map("target_amount")
+  status              String
+  exchangeExecutionId String?   @map("exchange_execution_id")
+  failureReason       String?   @map("failure_reason")
+  createdAt           DateTime  @map("created_at")
+  completedAt         DateTime? @map("completed_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+
+  @@unique([quoteId])
+  @@index([userId])
+  @@map("conversions")
+}
+
+// Transactional outbox — written in the same accept TX as quote/wallet/conversion.
+// Feature 4 publisher claims unpublished rows and marks them published.
+model OutboxMessage {
+  id          String    @id
+  eventType   String    @map("event_type")
+  aggregateId String    @map("aggregate_id")
+  payload     Json
+  createdAt   DateTime  @map("created_at")
+  publishedAt DateTime? @map("published_at")
+
+  @@index([publishedAt, createdAt])
+  @@map("outbox_messages")
+}
+
+// Stripe-style idempotency for POST /quotes/:id/accept.
+// Unique (scope, idempotencyKey). Retention: 24h (documented in README / DECISIONS).
+// Concurrent duplicates: unique constraint; loser reads winner's stored response.
+// Body fingerprint mismatch → 409 Conflict.
+model IdempotencyRecord {
+  id             String   @id @default(uuid())
+  scope          String
+  idempotencyKey String   @map("idempotency_key")
+  requestHash    String   @map("request_hash")
+  responseStatus Int?     @map("response_status")
+  responseBody   Json?    @map("response_body")
+  conversionId   String?  @map("conversion_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  @@unique([scope, idempotencyKey])
+  @@index([createdAt])
+  @@map("idempotency_records")
+}
+
+// Consumer idempotency for at-least-once RabbitMQ delivery (Feature 4).
+// Unique event_id — duplicate deliveries of the same outbox event are no-ops.
+model ProcessedMessage {
+  eventId     String   @id @map("event_id")
+  conversionId String  @map("conversion_id")
+  outcome     String
+  processedAt DateTime @default(now()) @map("processed_at")
+
+  @@index([conversionId])
+  @@map("processed_messages")
+}
