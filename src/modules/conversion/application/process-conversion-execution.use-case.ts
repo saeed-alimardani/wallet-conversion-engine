@@ -68,9 +68,20 @@ export class ProcessConversionExecutionUseCase {
       return;
     }
 
-    const conversion = await this.conversions.findById(conversionId);
+    const conversion = await this.conversions.markExecutionRequestedIfFundsReserved(
+      conversionId,
+      eventId,
+    );
     if (!conversion) {
       throw new Error(`Conversion ${payload.conversionId} not found for event ${eventId}`);
+    }
+
+    this.assertPayloadMatchesConversion(payload, conversion);
+    if (conversion.exchangeExecutionId !== eventId) {
+      throw new Error(
+        `Conversion ${payload.conversionId} is bound to execution event ` +
+          `${conversion.exchangeExecutionId ?? 'none'}, not ${eventId}`,
+      );
     }
 
     if (conversion.isTerminal) {
@@ -94,10 +105,7 @@ export class ProcessConversionExecutionUseCase {
       return;
     }
 
-    if (conversion.status === 'FUNDS_RESERVED') {
-      conversion.markExecutionRequested(eventId);
-      await this.conversions.save(conversion);
-    } else if (conversion.status !== 'EXECUTION_REQUESTED') {
+    if (conversion.status !== 'EXECUTION_REQUESTED') {
       throw new Error(
         `Conversion ${payload.conversionId} in unexpected status ${conversion.status} for execution`,
       );
@@ -237,6 +245,38 @@ export class ProcessConversionExecutionUseCase {
       return;
     }
     await wallets.create(WalletAccount.open(randomUUID(), userId, asset, Money.zero(asset)));
+  }
+
+  private assertPayloadMatchesConversion(
+    payload: ConversionExecutionRequestedPayload,
+    conversion: Conversion,
+  ): void {
+    if (payload.eventType !== 'ConversionExecutionRequested') {
+      throw new Error('Unsupported execution event type');
+    }
+    if (payload.userId !== conversion.userId.toString()) {
+      throw new Error(`Execution event ${payload.eventId} userId does not match conversion`);
+    }
+    if (
+      payload.sourceAsset !== conversion.sourceAmount.asset.code ||
+      payload.targetAsset !== conversion.targetAmount.asset.code
+    ) {
+      throw new Error(`Execution event ${payload.eventId} asset pair does not match conversion`);
+    }
+
+    const sourceAmount = Money.of(payload.sourceAmount, conversion.sourceAmount.asset);
+    const targetAmount = Money.of(payload.targetAmount, conversion.targetAmount.asset);
+    if (
+      !sourceAmount.equals(conversion.sourceAmount) ||
+      !targetAmount.equals(conversion.targetAmount)
+    ) {
+      throw new Error(`Execution event ${payload.eventId} amounts do not match conversion`);
+    }
+
+    const occurredAt = new Date(payload.occurredAt);
+    if (Number.isNaN(occurredAt.getTime())) {
+      throw new Error(`Execution event ${payload.eventId} occurredAt must be an ISO timestamp`);
+    }
   }
 
   private outcomeFromStatus(conversion: Conversion): ExecutionOutcome {

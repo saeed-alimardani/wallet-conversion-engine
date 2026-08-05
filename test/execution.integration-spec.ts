@@ -79,6 +79,9 @@ describe('Execution pipeline (integration)', () => {
   afterAll(async () => {
     const conversions = await prisma.conversion.findMany({ where: { userId } });
     const conversionIds = conversions.map((c) => c.id);
+    await prisma.fakeExchangeExecution.deleteMany({
+      where: { conversionId: { in: conversionIds } },
+    });
     await prisma.processedMessage.deleteMany({ where: { conversionId: { in: conversionIds } } });
     await prisma.outboxMessage.deleteMany({ where: { aggregateId: { in: conversionIds } } });
     await prisma.idempotencyRecord.deleteMany({ where: { conversionId: { in: conversionIds } } });
@@ -122,8 +125,6 @@ describe('Execution pipeline (integration)', () => {
 
   it('publishes outbox events and settles a successful conversion (commit + credit)', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
-
     const { conversionId, eventPayload } = await createAndAccept('40');
 
     const published = await publisher.publishBatch();
@@ -162,8 +163,6 @@ describe('Execution pipeline (integration)', () => {
 
   it('is idempotent on duplicate event delivery (no double settle)', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
-
     const { conversionId, eventPayload } = await createAndAccept('20');
     await publisher.publishBatch();
     await processExecution.execute(eventPayload);
@@ -191,8 +190,6 @@ describe('Execution pipeline (integration)', () => {
 
   it('releases reserved funds when the fake exchange fails', async () => {
     exchange.setMode('FAILURE');
-    exchange.clearMemoizedResults();
-
     const before = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_asset: { userId, asset: 'USDT' } },
     });
@@ -213,8 +210,6 @@ describe('Execution pipeline (integration)', () => {
 
   it('marks REQUIRES_RECONCILIATION on UNKNOWN without mutating the wallet', async () => {
     exchange.setMode('UNKNOWN');
-    exchange.clearMemoizedResults();
-
     const before = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_asset: { userId, asset: 'USDT' } },
     });

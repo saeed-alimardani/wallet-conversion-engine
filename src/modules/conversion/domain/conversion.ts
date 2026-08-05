@@ -145,6 +145,22 @@ export class Conversion {
     this.currentStatus = 'FUNDS_RESERVED';
   }
 
+  /** Binds the single outbox execution event while funds remain reserved. */
+  bindExecutionEvent(eventId: string): void {
+    if (this.currentStatus !== 'FUNDS_RESERVED') {
+      throw new InvalidConversionTransitionError(this.currentStatus, 'bindExecutionEvent');
+    }
+    if (!eventId.trim()) {
+      throw new Error('eventId must not be empty');
+    }
+    if (this.exchangeExecutionIdValue !== null && this.exchangeExecutionIdValue !== eventId) {
+      throw new Error(
+        `Conversion is already bound to execution event ${this.exchangeExecutionIdValue}`,
+      );
+    }
+    this.exchangeExecutionIdValue = eventId;
+  }
+
   /** After outbox event has been published (Feature 4 publisher / or when marking execution requested). */
   markExecutionRequested(exchangeExecutionId: string): void {
     if (this.currentStatus !== 'FUNDS_RESERVED') {
@@ -152,6 +168,15 @@ export class Conversion {
     }
     if (!exchangeExecutionId.trim()) {
       throw new Error('exchangeExecutionId must not be empty');
+    }
+    if (
+      this.exchangeExecutionIdValue !== null &&
+      this.exchangeExecutionIdValue !== exchangeExecutionId
+    ) {
+      throw new Error(
+        `Conversion is bound to execution event ${this.exchangeExecutionIdValue}, ` +
+          `not ${exchangeExecutionId}`,
+      );
     }
     this.exchangeExecutionIdValue = exchangeExecutionId;
     this.currentStatus = 'EXECUTION_REQUESTED';

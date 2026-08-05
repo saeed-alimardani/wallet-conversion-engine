@@ -1,5 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import Decimal from 'decimal.js';
+import { PrismaService } from '../../shared/infrastructure/prisma/prisma.service';
 import { ExecutionOutcome } from '../domain/conversion';
 import {
   ExchangeExecutionPort,
@@ -10,9 +12,9 @@ import {
 export type FakeExchangeMode = ExecutionOutcome;
 
 /**
- * Deterministic fake exchange (no real venue). Results are memoized by
- * `clientOrderId` so a timeout/redelivery retry returns the same outcome instead
- * of creating a second logical order (spec §11).
+ * Deterministic fake exchange (no real venue). Results are persisted by `clientOrderId`
+ * so timeout/redelivery retries and process restarts return the same outcome instead of
+ * creating a second logical order (spec §11).
  *
  * Default mode from `FAKE_EXCHANGE_MODE` (SUCCESS | FAILURE | UNKNOWN).
  * Tests may call `setMode` / `setModeForClientOrder` to force paths.
@@ -22,9 +24,11 @@ export class FakeExchangeAdapter implements ExchangeExecutionPort {
   private readonly logger = new Logger(FakeExchangeAdapter.name);
   private defaultMode: FakeExchangeMode;
   private readonly perOrderMode = new Map<string, FakeExchangeMode>();
-  private readonly resultsByClientOrderId = new Map<string, ExecutionResult>();
 
-  constructor(config: ConfigService) {
+  constructor(
+    config: ConfigService,
+    private readonly prisma: PrismaService,
+  ) {
     const configured = (config.get<string>('FAKE_EXCHANGE_MODE') ?? 'SUCCESS').toUpperCase();
     this.defaultMode = this.parseMode(configured);
   }
@@ -37,25 +41,45 @@ export class FakeExchangeAdapter implements ExchangeExecutionPort {
     this.perOrderMode.set(clientOrderId, mode);
   }
 
-  clearMemoizedResults(): void {
-    this.resultsByClientOrderId.clear();
-  }
+  async execute(command: ExecuteConversionCommand): Promise<ExecutionResult> {
+    const mode = this.perOrderMode.get(command.clientOrderId) ?? this.defaultMode;
+    const proposed = this.buildResult(command, mode);
+    const persisted = await this.prisma.fakeExchangeExecution.upsert({
+      where: { clientOrderId: command.clientOrderId },
+      update: {},
+      create: {
+        clientOrderId: command.clientOrderId,
+        conversionId: command.conversionId,
+        userId: command.userId,
+        sourceAsset: command.sourceAsset,
+        targetAsset: command.targetAsset,
+        sourceAmount: command.sourceAmount,
+        targetAmount: command.targetAmount,
+        outcome: proposed.outcome,
+        reason: proposed.reason,
+        externalReference: proposed.externalReference!,
+      },
+    });
+    this.assertSameCommand(command, persisted);
 
-  execute(command: ExecuteConversionCommand): Promise<ExecutionResult> {
-    const existing = this.resultsByClientOrderId.get(command.clientOrderId);
-    if (existing) {
+    const result: ExecutionResult = {
+      outcome: this.parsePersistedOutcome(persisted.outcome),
+      externalReference: persisted.externalReference,
+      ...(persisted.reason === null ? {} : { reason: persisted.reason }),
+    };
+    const replayed =
+      persisted.outcome !== proposed.outcome ||
+      persisted.reason !== (proposed.reason ?? null) ||
+      persisted.externalReference !== proposed.externalReference;
+    if (replayed) {
       this.logger.log({
         msg: 'fake_exchange_idempotent_replay',
         eventId: command.clientOrderId,
         conversionId: command.conversionId,
-        outcome: existing.outcome,
+        outcome: result.outcome,
       });
-      return Promise.resolve(existing);
+      return result;
     }
-
-    const mode = this.perOrderMode.get(command.clientOrderId) ?? this.defaultMode;
-    const result = this.buildResult(command, mode);
-    this.resultsByClientOrderId.set(command.clientOrderId, result);
 
     this.logger.log({
       msg: 'fake_exchange_executed',
@@ -65,7 +89,7 @@ export class FakeExchangeAdapter implements ExchangeExecutionPort {
       operationResult: result.outcome === 'SUCCESS' ? 'success' : 'failure',
     });
 
-    return Promise.resolve(result);
+    return result;
   }
 
   private buildResult(command: ExecuteConversionCommand, mode: FakeExchangeMode): ExecutionResult {
@@ -94,5 +118,38 @@ export class FakeExchangeAdapter implements ExchangeExecutionPort {
       return value;
     }
     return 'SUCCESS';
+  }
+
+  private parsePersistedOutcome(value: string): ExecutionOutcome {
+    if (value === 'FAILURE' || value === 'UNKNOWN' || value === 'SUCCESS') {
+      return value;
+    }
+    throw new Error(`Invalid persisted fake exchange outcome: ${value}`);
+  }
+
+  private assertSameCommand(
+    command: ExecuteConversionCommand,
+    persisted: {
+      conversionId: string;
+      userId: string;
+      sourceAsset: string;
+      targetAsset: string;
+      sourceAmount: unknown;
+      targetAmount: unknown;
+    },
+  ): void {
+    const identityMatches =
+      persisted.conversionId === command.conversionId &&
+      persisted.userId === command.userId &&
+      persisted.sourceAsset === command.sourceAsset &&
+      persisted.targetAsset === command.targetAsset;
+    const amountsMatch =
+      new Decimal(String(persisted.sourceAmount)).equals(command.sourceAmount) &&
+      new Decimal(String(persisted.targetAmount)).equals(command.targetAmount);
+    if (!identityMatches || !amountsMatch) {
+      throw new Error(
+        `clientOrderId ${command.clientOrderId} was already used for a different execution command`,
+      );
+    }
   }
 }

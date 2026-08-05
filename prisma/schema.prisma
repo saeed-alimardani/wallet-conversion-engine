@@ -126,3 +126,23 @@ model ProcessedMessage {
   @@index([conversionId])
   @@map("processed_messages")
 }
+
+// Durable state owned by the fake exchange adapter. In the simulation, creating this row is
+// the external side effect: retries and process restarts resolve the same clientOrderId to the
+// same result instead of creating a second logical trade.
+model FakeExchangeExecution {
+  clientOrderId    String   @id @map("client_order_id")
+  conversionId    String   @map("conversion_id")
+  userId           String   @map("user_id")
+  sourceAsset      String   @map("source_asset")
+  targetAsset      String   @map("target_asset")
+  sourceAmount     Decimal  @db.Decimal(38, 18) @map("source_amount")
+  targetAmount     Decimal  @db.Decimal(38, 18) @map("target_amount")
+  outcome          String
+  reason           String?
+  externalReference String  @map("external_reference")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([conversionId])
+  @@map("fake_exchange_executions")
+}

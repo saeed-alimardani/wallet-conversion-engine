@@ -70,6 +70,7 @@ describe('GetConversionUseCase', () => {
   const repo: ConversionRepository = {
     save: jest.fn(),
     findById,
+    markExecutionRequestedIfFundsReserved: jest.fn(),
   };
 
   const useCase = new GetConversionUseCase(repo);

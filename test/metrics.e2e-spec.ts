@@ -85,6 +85,7 @@ describe('Observability /metrics (e2e)', () => {
   afterAll(async () => {
     const conversions = await prisma.conversion.findMany({ where: { userId } });
     const ids = conversions.map((c) => c.id);
+    await prisma.fakeExchangeExecution.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.processedMessage.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.outboxMessage.deleteMany({ where: { aggregateId: { in: ids } } });
     await prisma.idempotencyRecord.deleteMany({ where: { conversionId: { in: ids } } });
@@ -177,8 +178,6 @@ describe('Observability /metrics (e2e)', () => {
 
   it('increments conversion_completed_total and execution_retry_total on settle + duplicate delivery', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
-
     const before = await scrape();
     const completedBefore = Number(before.match(/conversion_completed_total\s+(\d+)/)?.[1] ?? '0');
     const retryBefore = Number(before.match(/execution_retry_total\s+(\d+)/)?.[1] ?? '0');

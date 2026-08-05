@@ -9,6 +9,21 @@ import { Conversion, ConversionStatus } from '../domain/conversion';
 import { ConversionId } from '../domain/conversion-id';
 import { ConversionRepository } from '../domain/ports/conversion-repository.port';
 
+interface ConversionRow {
+  id: string;
+  quoteId: string;
+  userId: string;
+  sourceAsset: string;
+  targetAsset: string;
+  sourceAmount: unknown;
+  targetAmount: unknown;
+  status: string;
+  exchangeExecutionId: string | null;
+  failureReason: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
 @Injectable()
 export class PrismaConversionRepository implements ConversionRepository {
   private readonly db: PrismaDb;
@@ -57,20 +72,38 @@ export class PrismaConversionRepository implements ConversionRepository {
     return this.toDomain(row);
   }
 
-  private toDomain(row: {
-    id: string;
-    quoteId: string;
-    userId: string;
-    sourceAsset: string;
-    targetAsset: string;
-    sourceAmount: unknown;
-    targetAmount: unknown;
-    status: string;
-    exchangeExecutionId: string | null;
-    failureReason: string | null;
-    createdAt: Date;
-    completedAt: Date | null;
-  }): Conversion {
+  async markExecutionRequestedIfFundsReserved(
+    id: ConversionId,
+    eventId: string,
+  ): Promise<Conversion | null> {
+    const rows = await this.db.$queryRaw<ConversionRow[]>`
+      UPDATE conversions
+      SET status = 'EXECUTION_REQUESTED',
+          updated_at = NOW()
+      WHERE id = ${id.toString()}
+        AND status = 'FUNDS_RESERVED'
+        AND exchange_execution_id = ${eventId}
+      RETURNING
+        id,
+        quote_id AS "quoteId",
+        user_id AS "userId",
+        source_asset AS "sourceAsset",
+        target_asset AS "targetAsset",
+        source_amount AS "sourceAmount",
+        target_amount AS "targetAmount",
+        status,
+        exchange_execution_id AS "exchangeExecutionId",
+        failure_reason AS "failureReason",
+        created_at AS "createdAt",
+        completed_at AS "completedAt"
+    `;
+    if (rows.length > 0) {
+      return this.toDomain(rows[0]);
+    }
+    return this.findById(id);
+  }
+
+  private toDomain(row: ConversionRow): Conversion {
     const sourceAsset = Asset.of(row.sourceAsset);
     const targetAsset = Asset.of(row.targetAsset);
     return Conversion.reconstitute({

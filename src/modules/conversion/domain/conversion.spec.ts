@@ -47,6 +47,17 @@ describe('Conversion', () => {
     expect(conversion.exchangeExecutionId).toBe('exec-001');
   });
 
+  it('binds one execution event while funds remain reserved', () => {
+    const conversion = createConversion();
+    conversion.markFundsReserved();
+    conversion.bindExecutionEvent('event-001');
+
+    expect(conversion.status).toBe('FUNDS_RESERVED');
+    expect(conversion.exchangeExecutionId).toBe('event-001');
+    expect(() => conversion.bindExecutionEvent('event-002')).toThrow(/already bound/);
+    expect(() => conversion.markExecutionRequested('event-002')).toThrow(/bound to execution/);
+  });
+
   it('EXECUTION_REQUESTED → COMPLETED on SUCCESS', () => {
     const conversion = createConversion();
     conversion.markFundsReserved();

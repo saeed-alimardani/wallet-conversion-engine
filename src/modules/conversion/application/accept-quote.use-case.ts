@@ -214,9 +214,10 @@ export class AcceptQuoteUseCase {
         }
 
         conversion.markFundsReserved();
+        const eventId = this.ids.generate();
+        conversion.bindExecutionEvent(eventId);
         await ctx.conversions.save(conversion);
 
-        const eventId = this.ids.generate();
         const outbox = OutboxMessage.createConversionExecutionRequested({
           id: eventId,
           createdAt: now,

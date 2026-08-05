@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -13,6 +14,8 @@ import { AcceptQuoteSuccessBody } from '../src/modules/conversion/application/ac
 import { ProcessConversionExecutionUseCase } from '../src/modules/conversion/application/process-conversion-execution.use-case';
 import { FakeExchangeAdapter } from '../src/modules/conversion/infrastructure/fake-exchange.adapter';
 import { ConversionExecutionRequestedPayload } from '../src/modules/conversion/domain/outbox-message';
+import { ConversionId } from '../src/modules/conversion/domain/conversion-id';
+import { PrismaConversionRepository } from '../src/modules/conversion/infrastructure/prisma-conversion.repository';
 
 /**
  * Concurrent duplicate delivery + repair paths. Requires Postgres.
@@ -75,6 +78,7 @@ describe('Execution race conditions (integration)', () => {
   afterAll(async () => {
     const conversions = await prisma.conversion.findMany({ where: { userId } });
     const ids = conversions.map((c) => c.id);
+    await prisma.fakeExchangeExecution.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.processedMessage.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.outboxMessage.deleteMany({ where: { aggregateId: { in: ids } } });
     await prisma.idempotencyRecord.deleteMany({ where: { conversionId: { in: ids } } });
@@ -116,10 +120,11 @@ describe('Execution race conditions (integration)', () => {
 
   it('concurrent duplicate delivery settles the wallet exactly once', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
-
     const before = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_asset: { userId, asset: 'USDT' } },
+    });
+    const btcBefore = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'BTC' } },
     });
 
     const { conversionId, eventPayload } = await createAndAccept('30');
@@ -147,13 +152,91 @@ describe('Execution race conditions (integration)', () => {
     const btc = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_asset: { userId, asset: 'BTC' } },
     });
-    expect(Number(btc.available)).toBeGreaterThan(0);
+    expect(String(btc.available)).toBe(String(btcBefore.available.add(conversion.targetAmount)));
+  });
+
+  it('rejects a distinct execution event before calling the exchange', async () => {
+    const { conversionId, eventPayload } = await createAndAccept('12');
+    const differentEventId = randomUUID();
+
+    await expect(
+      processExecution.execute({ ...eventPayload, eventId: differentEventId }),
+    ).rejects.toThrow(/is bound to execution event/);
+    expect(
+      await prisma.fakeExchangeExecution.count({
+        where: { clientOrderId: differentEventId },
+      }),
+    ).toBe(0);
+
+    await processExecution.execute(eventPayload);
+    expect(
+      (await prisma.conversion.findUniqueOrThrow({ where: { id: conversionId } })).status,
+    ).toBe('COMPLETED');
+  });
+
+  it('rejects tampered monetary payloads before calling the exchange', async () => {
+    const { conversionId, eventPayload } = await createAndAccept('8');
+
+    await expect(processExecution.execute({ ...eventPayload, sourceAmount: '7' })).rejects.toThrow(
+      /amounts do not match conversion/,
+    );
+    expect(
+      await prisma.fakeExchangeExecution.count({
+        where: { clientOrderId: eventPayload.eventId },
+      }),
+    ).toBe(0);
+
+    await processExecution.execute(eventPayload);
+    expect(
+      (await prisma.conversion.findUniqueOrThrow({ where: { id: conversionId } })).status,
+    ).toBe('COMPLETED');
+  });
+
+  it('cannot overwrite a terminal conversion with a stale execution-request transition', async () => {
+    const { conversionId, eventPayload } = await createAndAccept('11');
+    await processExecution.execute(eventPayload);
+
+    const repository = new PrismaConversionRepository(prisma);
+    const latest = await repository.markExecutionRequestedIfFundsReserved(
+      ConversionId.of(conversionId),
+      eventPayload.eventId,
+    );
+
+    expect(latest?.status).toBe('COMPLETED');
+    expect(
+      (await prisma.conversion.findUniqueOrThrow({ where: { id: conversionId } })).status,
+    ).toBe('COMPLETED');
+  });
+
+  it('replays a persisted exchange result after adapter restart', async () => {
+    exchange.setMode('SUCCESS');
+    const { conversionId, eventPayload } = await createAndAccept('9');
+    await processExecution.execute(eventPayload);
+
+    const restarted = new FakeExchangeAdapter(
+      { get: () => 'FAILURE' } as unknown as ConfigService,
+      prisma,
+    );
+    const replay = await restarted.execute({
+      clientOrderId: eventPayload.eventId,
+      conversionId,
+      userId: eventPayload.userId,
+      sourceAsset: eventPayload.sourceAsset,
+      targetAsset: eventPayload.targetAsset,
+      sourceAmount: eventPayload.sourceAmount,
+      targetAmount: eventPayload.targetAmount,
+    });
+
+    expect(replay.outcome).toBe('SUCCESS');
+    expect(
+      await prisma.fakeExchangeExecution.count({
+        where: { clientOrderId: eventPayload.eventId },
+      }),
+    ).toBe(1);
   });
 
   it('repairs terminal conversion missing processed_messages without re-settling', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
-
     const { conversionId, eventPayload } = await createAndAccept('10');
     await processExecution.execute(eventPayload);
 
@@ -187,8 +270,6 @@ describe('Execution race conditions (integration)', () => {
 
   it('creates a missing target wallet on SUCCESS settle', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
-
     // Ensure only USDT exists for a fresh user
     const lonelyUser = `exec-lonely-${randomUUID()}`;
     const usdt = WalletAccount.open(
@@ -242,6 +323,7 @@ describe('Execution race conditions (integration)', () => {
     expect(Number(btc.available)).toBeGreaterThan(0);
 
     // cleanup lonely user
+    await prisma.fakeExchangeExecution.deleteMany({ where: { conversionId } });
     await prisma.processedMessage.deleteMany({ where: { conversionId } });
     await prisma.outboxMessage.deleteMany({ where: { aggregateId: conversionId } });
     await prisma.idempotencyRecord.deleteMany({ where: { conversionId } });

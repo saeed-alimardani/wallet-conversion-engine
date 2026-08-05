@@ -76,6 +76,7 @@ describe('GET /conversions/:conversionId (integration)', () => {
   afterAll(async () => {
     const conversions = await prisma.conversion.findMany({ where: { userId } });
     const ids = conversions.map((c) => c.id);
+    await prisma.fakeExchangeExecution.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.processedMessage.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.outboxMessage.deleteMany({ where: { aggregateId: { in: ids } } });
     await prisma.idempotencyRecord.deleteMany({ where: { conversionId: { in: ids } } });
@@ -134,7 +135,6 @@ describe('GET /conversions/:conversionId (integration)', () => {
 
   it('returns COMPLETED after successful execution', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
     const { conversionId, payload } = await acceptAmount('20');
     await processExecution.execute(payload);
 
@@ -148,7 +148,6 @@ describe('GET /conversions/:conversionId (integration)', () => {
 
   it('returns FAILED after exchange failure (funds released)', async () => {
     exchange.setMode('FAILURE');
-    exchange.clearMemoizedResults();
     const { conversionId, payload } = await acceptAmount('15');
     await processExecution.execute(payload);
 
@@ -160,7 +159,6 @@ describe('GET /conversions/:conversionId (integration)', () => {
 
   it('returns REQUIRES_RECONCILIATION after UNKNOWN exchange timeout', async () => {
     exchange.setMode('UNKNOWN');
-    exchange.clearMemoizedResults();
     const { conversionId, payload } = await acceptAmount('10');
     await processExecution.execute(payload);
 
@@ -187,7 +185,6 @@ describe('GET /conversions/:conversionId (integration)', () => {
 
   it('is stable across repeated GETs (read-only, no state change)', async () => {
     exchange.setMode('SUCCESS');
-    exchange.clearMemoizedResults();
     const { conversionId, payload } = await acceptAmount('5');
     await processExecution.execute(payload);
 
