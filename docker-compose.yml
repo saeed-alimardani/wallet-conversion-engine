@@ -56,6 +56,10 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       DATABASE_URL: postgresql://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet_conversion}?schema=public
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-wallet}:${RABBITMQ_PASSWORD:-wallet}@rabbitmq:5672
+      MESSAGING_ENABLED: ${MESSAGING_ENABLED:-true}
+      OUTBOX_PUBLISHER_ENABLED: ${OUTBOX_PUBLISHER_ENABLED:-true}
+      EXECUTION_CONSUMER_ENABLED: ${EXECUTION_CONSUMER_ENABLED:-true}
+      FAKE_EXCHANGE_MODE: ${FAKE_EXCHANGE_MODE:-SUCCESS}
     ports:
       - '${APP_PORT:-3000}:3000'
     healthcheck:

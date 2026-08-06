@@ -49,7 +49,9 @@ Compose waits for PostgreSQL and RabbitMQ, applies all production migrations, se
 Host ports can be overridden with `POSTGRES_PORT`, `RABBITMQ_PORT`,
 `RABBITMQ_MANAGEMENT_PORT`, and `APP_PORT`.
 
-Fake exchange default outcome is controlled by `FAKE_EXCHANGE_MODE=SUCCESS|FAILURE|UNKNOWN`.
+Fake exchange default outcome is controlled by `FAKE_EXCHANGE_MODE=SUCCESS|FAILURE|UNKNOWN`
+(also forwarded into the Compose `app` service). Messaging loops can be toggled with
+`MESSAGING_ENABLED`, `OUTBOX_PUBLISHER_ENABLED`, and `EXECUTION_CONSUMER_ENABLED`.
 
 ---
 
