@@ -54,11 +54,11 @@ Each module uses layers: `domain` → `application` → `infrastructure` / `pres
 
 ## Transaction boundaries
 
-| Operation | Boundary | What is atomic |
-|-----------|----------|----------------|
-| Accept quote | Single Prisma `$transaction` | Idempotency claim, quote accept, conversion `CREATED`→`FUNDS_RESERVED`, wallet reserve, outbox insert |
-| Outbox publish | Per-row after successful broker publish | Mark `publishedAt` only after RabbitMQ accept |
-| Execution settle | Single Prisma `$transaction` | `processed_messages` claim, wallet commit/release + credit, conversion terminal status |
+| Operation        | Boundary                          | What is atomic                                                                                        |
+| ---------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Accept quote     | Single Prisma `$transaction`      | Idempotency claim, quote accept, conversion `CREATED`→`FUNDS_RESERVED`, wallet reserve, outbox insert |
+| Outbox publish   | Per-row after broker confirmation | Mark `publishedAt` only after RabbitMQ publisher confirm                                              |
+| Execution settle | Single Prisma `$transaction`      | `processed_messages` claim, wallet commit/release + credit, conversion terminal status                |
 
 Business accept failures throw `AcceptAbortedError` so the whole accept TX (including the
 idempotency claim) rolls back — failed accepts do not poison keys.
@@ -90,8 +90,8 @@ sequenceDiagram
   ConversionUC->>OutboxDB: insert ConversionExecutionRequested
   ConversionUC-->>Client: 201 FUNDS_RESERVED
 
-  Publisher->>OutboxDB: claim unpublished batch
-  Publisher->>RMQ: publish topic
+  Publisher->>OutboxDB: read unpublished batch
+  Publisher->>RMQ: publish topic + await confirm
   Publisher->>OutboxDB: mark publishedAt
 
   RMQ->>Worker: deliver event
@@ -108,7 +108,7 @@ sequenceDiagram
 stateDiagram-v2
   [*] --> CREATED: acceptQuoteStarts
   CREATED --> FUNDS_RESERVED: walletReserved
-  FUNDS_RESERVED --> EXECUTION_REQUESTED: outboxPublishedOrConsumed
+  FUNDS_RESERVED --> EXECUTION_REQUESTED: execution event consumed
   EXECUTION_REQUESTED --> COMPLETED: exchangeSuccess
   EXECUTION_REQUESTED --> FAILED: exchangeFailure
   EXECUTION_REQUESTED --> REQUIRES_RECONCILIATION: unknownTimeout
@@ -124,9 +124,11 @@ transaction it immediately transitions to `FUNDS_RESERVED` after a successful re
 1. Accept writes `outbox_messages` with type `ConversionExecutionRequested` and JSON payload
    (`eventId`, `conversionId`, amounts as decimal strings, `occurredAt`).
 2. `OutboxPublisherService` polls unpublished rows in configurable batches (`OUTBOX_BATCH_SIZE`),
-   publishes to RabbitMQ topic `conversion.execution.requested`, then sets `publishedAt`.
+   publishes persistent messages to RabbitMQ topic `conversion.execution.requested` through a
+   confirm channel, then sets `publishedAt`.
 3. `ExecutionConsumerService` consumes, invokes `ProcessConversionExecutionUseCase`, acks on
-   success / nacks (requeue) on unexpected errors.
+   success, and uses bounded broker republishing on unexpected errors. Messages exceeding
+   `RABBITMQ_CONSUMER_MAX_RETRIES` are routed to the dead-letter queue.
 4. Consumer idempotency: unique `processed_messages(event_id)`. Duplicate deliveries are no-ops.
 
 ## Outbox flow
@@ -134,15 +136,17 @@ transaction it immediately transitions to `FUNDS_RESERVED` after a successful re
 ```
 Accept TX commit
     → row in outbox_messages (published_at NULL)
-    → publisher claims LIMIT N unpublished
-    → publish to RabbitMQ
+    → publisher reads LIMIT N unpublished
+    → persistent publish to RabbitMQ confirm channel
+    → wait for broker confirm and backpressure drain when required
     → UPDATE published_at = now()
-    → on broker failure: leave unpublished, increment outbox_publish_failure_total, retry next poll
+    → on broker failure/timeout: leave unpublished, increment outbox_publish_failure_total,
+      retry next poll
 ```
 
 Residual risk: publish succeeds but the process crashes before marking published → duplicate
-publish. Mitigation: consumer idempotency on `eventId` (and fake exchange memoization by
-`clientOrderId = eventId`).
+publish. Mitigation: consumer idempotency on `eventId` and the fake exchange's PostgreSQL-persisted
+result keyed by `clientOrderId = eventId`.
 
 ## Deployment assumptions
 
@@ -152,5 +156,9 @@ publish. Mitigation: consumer idempotency on `eventId` (and fake exchange memoiz
 - Env vars from `.env.example` control messaging loops (`MESSAGING_ENABLED`,
   `OUTBOX_PUBLISHER_ENABLED`, `EXECUTION_CONSUMER_ENABLED`) so tests can disable background
   loops and drive publish/process explicitly.
+- RabbitMQ reconnect uses bounded exponential backoff and restores registered consumers after
+  channel recovery. Exhausted poison-message retries are dead-lettered.
+- Completed idempotency records are cleaned after a configurable 24h retention period in bounded
+  batches; in-progress records are retained.
 - No Kubernetes manifests, OpenTelemetry, or Redis (explicit non-goals).
 - Wallet funding is via seed / test helpers — no public create-wallet API in scope.

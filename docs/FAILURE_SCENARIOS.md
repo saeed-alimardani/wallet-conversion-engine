@@ -16,7 +16,8 @@ any idempotency claim. No conversion, outbox row, or wallet mutation remains.
 
 **What happens:** Same `Idempotency-Key` is retried on the same quote after a successful accept.
 
-**Handling:** Unique `(scope, idempotency_key)` where scope = `POST:/quotes/:quoteId/accept`.
+**Handling:** `idempotency_key` is globally unique; the operation scope
+`POST:/quotes/:quoteId/accept` and a quote-specific request fingerprint are stored with it.
 Winner stores `response_status` + `response_body`. Concurrent same-key losers that observe
 `in-progress` wait outside the accept TX (poll, configurable via
 `IDEMPOTENCY_IN_PROGRESS_WAIT_MS`) and then replay the stored 201 body so both callers receive
@@ -46,16 +47,19 @@ quote accept, conversion, wallet reserve, outbox. Client receives an error; a la
 same key can proceed (no poisoned in-progress row from a rolled-back claim — claims use
 `INSERT … ON CONFLICT DO NOTHING` and business failures abort the TX).
 
-**Test:** expired/insufficient paths assert zero side effects; poisoned-key regression covers
-rollback of failed accepts.
+**Test:** `accept-failure-paths.integration-spec.ts` fault-injects an outbox persistence failure
+and proves quote, wallet, conversion, outbox, and idempotency writes all roll back.
+`execution.integration-spec.ts` fault-injects conversion persistence failure after wallet
+settlement operations and proves wallet changes plus the processed-message claim roll back.
 
 ## 5. Outbox publication failure
 
 **What happens:** Publisher reads unpublished rows but RabbitMQ publish throws / NACK.
 
-**Handling:** Row stays `published_at IS NULL`. Metric `outbox_publish_failure_total` increments.
-Next poll retries. Business state (reserved funds, conversion `FUNDS_RESERVED`) remains correct
-until a later successful publish + consume.
+**Handling:** Persistent publication uses a RabbitMQ confirm channel. A NACK, confirm timeout,
+connection failure, or backpressure failure leaves `published_at IS NULL`; metric
+`outbox_publish_failure_total` increments and the next poll retries. Business state (reserved
+funds, conversion `FUNDS_RESERVED`) remains correct until a later confirmed publish + consume.
 
 **Residual risk:** Publish OK then crash before marking published → duplicate broker message;
 consumer idempotency absorbs it.
@@ -68,7 +72,9 @@ consumer idempotency absorbs it.
 
 1. Fast path: `processed_messages.exists(eventId)` → increment `execution_retry_total`, return.
 2. Race: two workers call `tryRecord`; unique constraint lets one claim; the other skips settlement.
-3. Fake exchange memoizes by `clientOrderId = eventId` so external simulation is identical.
+3. Fake exchange stores one immutable result per `clientOrderId = eventId` in PostgreSQL, so
+   external simulation is identical across concurrent calls and process restarts.
+4. Unexpected consumer failures are retried a bounded number of times, then dead-lettered.
 
 Wallet settle/release runs at most once.
 
@@ -93,8 +99,8 @@ transitions.
 **What happens:** Fake (or real) exchange already executed for `clientOrderId`, then the worker
 dies before committing settlement.
 
-**Handling:** On restart/redelivery, exchange adapter returns the memoized result for the same
-`clientOrderId`. Consumer retries settlement TX. If conversion is already terminal but
+**Handling:** On restart/redelivery, the exchange adapter returns the PostgreSQL-persisted result
+for the same `clientOrderId`. Consumer retries settlement TX. If conversion is already terminal but
 `processed_messages` is missing, the use case “repairs” by recording the event without
 re-settling.
 

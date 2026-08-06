@@ -12,15 +12,20 @@
 
 ## Aggregates (accepted)
 
-| Aggregate | Boundary |
-|-----------|----------|
-| Quote | Expiry + single accept + `acceptedAt` |
+| Aggregate     | Boundary                                |
+| ------------- | --------------------------------------- |
+| Quote         | Expiry + single accept + `acceptedAt`   |
 | WalletAccount | Financial invariants for one user+asset |
-| Conversion | State machine only |
+| Conversion    | State machine only                      |
 
 **Wallet ≠ Conversion:** shared wallet across many conversions; coordinate in one DB TX on accept.
 
-**Reservation folded into WalletAccount:** no independent lifecycle; correlation id = conversion id.
+**Reservation folded into WalletAccount:** no independent lifecycle; use the conversion amount
+when settling or releasing.
+
+> **Human correction during implementation:** the initial output proposed a
+> `ReservationId = ConversionId` correlation that the aggregate did not need and the code does not
+> contain. The wallet persists only aggregate `reserved`; the conversion persists its own amount.
 
 ## Invariants (must enforce)
 
@@ -36,12 +41,12 @@
 
 ## Open questions resolved as safe-defaults
 
-| Question | Default |
-|----------|---------|
-| Persist EXPIRED status? | Derive from clock; do not require a row rewrite |
-| Reservation entity table? | No — reserved counter + conversion correlation |
-| Version column on wallet? | No — predicate UPDATE |
-| UNKNOWN automatic retry settle? | No — hold funds; ops/client-order query path |
+| Question                        | Default                                                       |
+| ------------------------------- | ------------------------------------------------------------- |
+| Persist EXPIRED status?         | Derive from clock; do not require a row rewrite               |
+| Reservation entity table?       | No — reserved counter + conversion amount used for settlement |
+| Version column on wallet?       | No — predicate UPDATE                                         |
+| UNKNOWN automatic retry settle? | No — hold funds; ops/client-order query path                  |
 
 ## Explicitly deferred
 

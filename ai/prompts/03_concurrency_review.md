@@ -12,9 +12,10 @@ SET available = available - :amount, reserved = reserved + :amount
 WHERE user_id = :userId AND asset = :asset AND available >= :amount;
 ```
 
-Idempotency: unique `(scope, idempotency_key)`, scope = `POST:/quotes/:quoteId/accept`.
-Outbox: accept TX inserts event; publisher marks published after RabbitMQ publish.
-Consumer: `processed_messages(event_id)`; fake exchange memoized by `clientOrderId = eventId`.
+Idempotency: globally unique `idempotency_key`; operation scope and request fingerprint persisted.
+Outbox: accept TX inserts event; publisher marks published only after RabbitMQ confirm.
+Consumer: `processed_messages(event_id)`; fake exchange result persisted by
+`clientOrderId = eventId`.
 Exchange outcomes: SUCCESS (commit+credit), FAILURE (release), UNKNOWN (REQUIRES_RECONCILIATION,
 hold reservation).
 

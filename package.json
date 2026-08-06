@@ -9,8 +9,8 @@
   },
   "scripts": {
     "build": "nest build",
-    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" \"scripts/**/*.mjs\" \"package.json\" \"docker-compose.yml\"",
-    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" \"scripts/**/*.mjs\" \"package.json\" \"docker-compose.yml\"",
+    "format": "prettier --write \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" \"scripts/**/*.mjs\" \"README.md\" \"docs/**/*.md\" \"ai/**/*.md\" \"package.json\" \"docker-compose.yml\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"test/**/*.ts\" \"prisma/**/*.ts\" \"scripts/**/*.mjs\" \"README.md\" \"docs/**/*.md\" \"ai/**/*.md\" \"package.json\" \"docker-compose.yml\"",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",

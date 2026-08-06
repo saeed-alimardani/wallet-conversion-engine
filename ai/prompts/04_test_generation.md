@@ -6,9 +6,9 @@
 
 Domain unit tests run with Jest (`npm test`) without Postgres.
 Integration/e2e (`npm run test:e2e`) use Docker Compose Postgres + RabbitMQ.
-E2E setup disables background publisher/consumer loops by default; tests may opt into messaging
-and drive `publishBatch` / `ProcessConversionExecutionUseCase.execute` explicitly.
-Fake exchange modes: SUCCESS | FAILURE | UNKNOWN; memoized by eventId.
+E2E setup keeps RabbitMQ connectivity enabled but disables background publisher/consumer loops;
+tests drive `publishBatch` / `ProcessConversionExecutionUseCase.execute` explicitly.
+Fake exchange modes: SUCCESS | FAILURE | UNKNOWN; result persisted by eventId.
 
 ## Constraints
 

@@ -41,9 +41,13 @@ enforces the invariant in memory before/after mapping. No optimistic `version` c
 **Decision:**
 
 1. Accept TX writes business rows + `outbox_messages`.
-2. Batched publisher (`LIMIT` configurable) publishes then marks `publishedAt`.
+2. Batched publisher (`LIMIT` configurable) uses persistent messages and publisher confirms,
+   then marks `publishedAt`.
 3. Consumer records `processed_messages(event_id)` uniquely before/with settlement.
-4. Fake exchange memoizes by `clientOrderId = eventId` so external simulation is stable on retry.
+4. Fake exchange outcomes are persisted by `clientOrderId = eventId` so simulation remains stable
+   across retries and process restarts.
+5. Consumer failures are republished with a bounded retry header; exhausted messages are routed
+   to a dead-letter queue.
 
 **Consequences:**
 
@@ -99,3 +103,25 @@ event sourcing, no Redis locking introduced for this challenge.
 
 **Consequences:** Documented in README limitations; concurrency integration tests prove the
 80+80 vs 100 case.
+
+---
+
+## ADR-005 — Globally unique HTTP idempotency keys with bounded retention
+
+**Status:** Accepted
+
+**Context:** A client key reused for another quote must not create a second conversion, even if
+the endpoint's logical scope string is unchanged. Completed records also need bounded retention.
+
+**Decision:** `idempotency_key` is globally unique. Each record stores the operation scope and a
+SHA-256 request fingerprint; same-key/same-fingerprint requests replay the stored response, while
+same-key/different-fingerprint requests return `IDEMPOTENCY_KEY_REUSE`. Completed records older
+than 24 hours are deleted in bounded batches; in-progress records are retained.
+
+**Consequences:**
+
+- Pros: simple client contract; no cross-quote key reuse; deterministic replay; bounded table
+  growth.
+- Cons: clients cannot intentionally reuse a key for another operation after completion until
+  retention removes it; the in-process cleanup loop should become a separately monitored job in
+  a larger deployment.
