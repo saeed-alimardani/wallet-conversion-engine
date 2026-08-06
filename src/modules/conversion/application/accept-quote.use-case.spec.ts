@@ -49,18 +49,19 @@ describe('AcceptQuoteUseCase idempotency wait', () => {
     finds: Array<Awaited<ReturnType<IdempotencyRepository['find']>>>;
   }): AcceptQuoteUseCase {
     const uow: UnitOfWork = {
-      execute: async <T>(): Promise<T> => deps.uowResult as T,
+      execute: <T>(): Promise<T> => Promise.resolve(deps.uowResult as T),
     };
 
     let findCalls = 0;
     const idempotency: IdempotencyRepository = {
-      find: jest.fn(async () => {
+      find: jest.fn(() => {
         const next = deps.finds[findCalls] ?? deps.finds[deps.finds.length - 1];
         findCalls += 1;
-        return next;
+        return Promise.resolve(next);
       }),
       tryBegin: jest.fn(),
       complete: jest.fn(),
+      deleteExpired: jest.fn().mockResolvedValue(0),
     };
 
     const clock: Clock = { now: () => new Date('2026-08-01T10:00:00Z') };

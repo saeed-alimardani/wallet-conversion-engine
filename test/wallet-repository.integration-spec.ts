@@ -53,6 +53,23 @@ describe('PrismaWalletRepository (integration)', () => {
     expect(found).toBeNull();
   });
 
+  it('createIfMissing() is safe under concurrent target-wallet creation', async () => {
+    const userId = freshUserId();
+    await Promise.all(
+      Array.from({ length: 20 }, () =>
+        repository.createIfMissing(WalletAccount.open(randomUUID(), userId, BTC, Money.zero(BTC))),
+      ),
+    );
+
+    expect(
+      await prisma.walletAccount.count({
+        where: { userId: userId.toString(), asset: BTC.code },
+      }),
+    ).toBe(1);
+    const wallet = await repository.findByUserAndAsset(userId, BTC);
+    expect(wallet?.balance.toString()).toBe('0.00000000');
+  });
+
   it('reserve() atomically moves funds from available to reserved', async () => {
     const userId = freshUserId();
     await seedWallet(userId, '100');

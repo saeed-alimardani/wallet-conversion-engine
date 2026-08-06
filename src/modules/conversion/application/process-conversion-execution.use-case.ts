@@ -240,11 +240,9 @@ export class ProcessConversionExecutionUseCase {
     userId: UserId,
     asset: Asset,
   ): Promise<void> {
-    const existing = await wallets.findByUserAndAsset(userId, asset);
-    if (existing) {
-      return;
-    }
-    await wallets.create(WalletAccount.open(randomUUID(), userId, asset, Money.zero(asset)));
+    await wallets.createIfMissing(
+      WalletAccount.open(randomUUID(), userId, asset, Money.zero(asset)),
+    );
   }
 
   private assertPayloadMatchesConversion(

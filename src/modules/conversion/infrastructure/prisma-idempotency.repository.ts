@@ -19,9 +19,9 @@ export class PrismaIdempotencyRepository implements IdempotencyRepository {
     return new PrismaIdempotencyRepository(tx as PrismaService);
   }
 
-  async find(scope: string, key: string): Promise<IdempotencyLookup> {
+  async find(_scope: string, key: string): Promise<IdempotencyLookup> {
     const row = await this.db.idempotencyRecord.findUnique({
-      where: { scope_idempotencyKey: { scope, idempotencyKey: key } },
+      where: { idempotencyKey: key },
     });
     if (!row) {
       return { kind: 'missing' };
@@ -47,7 +47,7 @@ export class PrismaIdempotencyRepository implements IdempotencyRepository {
     const rows = await this.db.$queryRaw<Array<{ id: string }>>`
       INSERT INTO idempotency_records (id, scope, idempotency_key, request_hash, created_at, updated_at)
       VALUES (gen_random_uuid()::text, ${scope}, ${key}, ${requestHash}, NOW(), NOW())
-      ON CONFLICT (scope, idempotency_key) DO NOTHING
+      ON CONFLICT (idempotency_key) DO NOTHING
       RETURNING id
     `;
     return rows.length > 0;
@@ -58,13 +58,32 @@ export class PrismaIdempotencyRepository implements IdempotencyRepository {
     key: string,
     response: { responseStatus: number; responseBody: unknown; conversionId: string },
   ): Promise<void> {
-    await this.db.idempotencyRecord.update({
-      where: { scope_idempotencyKey: { scope, idempotencyKey: key } },
+    const updated = await this.db.idempotencyRecord.updateMany({
+      where: { scope, idempotencyKey: key },
       data: {
         responseStatus: response.responseStatus,
         responseBody: response.responseBody as Prisma.InputJsonValue,
         conversionId: response.conversionId,
       },
     });
+    if (updated.count !== 1) {
+      throw new Error(`Cannot complete unclaimed idempotency key ${key} in scope ${scope}`);
+    }
+  }
+
+  async deleteExpired(before: Date, limit: number): Promise<number> {
+    const rows = await this.db.$queryRaw<Array<{ id: string }>>`
+      DELETE FROM idempotency_records
+      WHERE id IN (
+        SELECT id
+        FROM idempotency_records
+        WHERE created_at < ${before}
+        ORDER BY created_at ASC
+        LIMIT ${limit}
+        FOR UPDATE SKIP LOCKED
+      )
+      RETURNING id
+    `;
+    return rows.length;
   }
 }

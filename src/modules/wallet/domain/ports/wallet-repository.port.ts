@@ -18,6 +18,9 @@ export interface WalletRepository {
   /** Persists a brand-new wallet. Seeding only in this challenge's scope (no public create-wallet API, spec API surface). */
   create(wallet: WalletAccount): Promise<void>;
 
+  /** Atomically creates a zero-balance settlement wallet, or leaves the existing wallet unchanged. */
+  createIfMissing(wallet: WalletAccount): Promise<void>;
+
   /**
    * Atomically reserves `amount` using a single conditional
    * `UPDATE ... WHERE available >= amount` (see docs/DECISIONS.md) — the primary

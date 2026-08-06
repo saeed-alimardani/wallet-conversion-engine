@@ -23,4 +23,7 @@ export interface IdempotencyRepository {
     key: string,
     response: { responseStatus: number; responseBody: unknown; conversionId: string },
   ): Promise<void>;
+
+  /** Deletes at most `limit` records created before the retention cutoff. */
+  deleteExpired(before: Date, limit: number): Promise<number>;
 }

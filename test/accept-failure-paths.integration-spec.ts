@@ -142,15 +142,12 @@ describe('Accept failure paths (integration)', () => {
     expect(await prisma.conversion.count({ where: { quoteId } })).toBe(1);
   });
 
-  it('returns 409 IDEMPOTENCY_KEY_REUSE when the same key is used on a different quote', async () => {
-    // Scope includes quoteId, so same key on different quotes is a *different* record.
-    // Fingerprint mismatch is same scope+key with different request hash — force by
-    // inserting a completed record with a different hash under the same scope/key.
+  it('returns 409 IDEMPOTENCY_KEY_REUSE for a preclaimed key with another fingerprint', async () => {
     const quoteId = await createQuote('5');
     const key = randomUUID();
     await prisma.idempotencyRecord.create({
       data: {
-        scope: `POST:/quotes/${quoteId}/accept`,
+        scope: 'POST:/quotes/:quoteId/accept',
         idempotencyKey: key,
         requestHash: 'not-the-real-hash',
         responseStatus: 201,

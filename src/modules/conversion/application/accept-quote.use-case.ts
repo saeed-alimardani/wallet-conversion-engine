@@ -37,14 +37,11 @@ export type AcceptQuoteResult =
 /** Max time a concurrent same-key loser waits for the winner to complete (spec §9). */
 const DEFAULT_IN_PROGRESS_WAIT_MS = 2000;
 const DEFAULT_IN_PROGRESS_POLL_MS = 25;
-
-function acceptScope(quoteId: string): string {
-  return `POST:/quotes/${quoteId}/accept`;
-}
+const ACCEPT_QUOTE_SCOPE = 'POST:/quotes/:quoteId/accept';
 
 function requestHash(quoteId: string): string {
-  // Accept has no body; fingerprint the path identity so a reused key on a different
-  // quoteId (different scope) is a separate record, and same scope+key always matches.
+  // Accept has no body; fingerprint the path identity so global key reuse against a
+  // different quote is rejected even though both calls belong to the same operation scope.
   return createHash('sha256').update(quoteId).digest('hex');
 }
 
@@ -102,7 +99,7 @@ export class AcceptQuoteUseCase {
       };
     }
 
-    const scope = acceptScope(quoteIdValue);
+    const scope = ACCEPT_QUOTE_SCOPE;
     const hash = requestHash(quoteIdValue);
 
     try {

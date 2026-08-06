@@ -189,6 +189,39 @@ describe('Accept quote (integration)', () => {
     expect(outbox).toHaveLength(1);
   });
 
+  it('rejects global Idempotency-Key reuse for a different quote', async () => {
+    await prisma.walletAccount.update({
+      where: { userId_asset: { userId, asset: 'USDT' } },
+      data: { available: '100', reserved: '0', balance: '100' },
+    });
+    const firstQuoteId = await createQuote('10');
+    const secondQuoteId = await createQuote('15');
+    const idempotencyKey = randomUUID();
+    const server = app.getHttpServer() as App;
+
+    const first = await request(server)
+      .post(`/quotes/${firstQuoteId}/accept`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send();
+    expect(first.status).toBe(201);
+    createdConversionIds.push((first.body as AcceptQuoteSuccessBody).conversionId);
+
+    const second = await request(server)
+      .post(`/quotes/${secondQuoteId}/accept`)
+      .set('Idempotency-Key', idempotencyKey)
+      .send();
+    expect(second.status).toBe(409);
+    expect(second.body).toMatchObject({ errorCode: 'IDEMPOTENCY_KEY_REUSE' });
+
+    const untouchedQuote = await prisma.quote.findUniqueOrThrow({ where: { id: secondQuoteId } });
+    expect(untouchedQuote.status).toBe('ACTIVE');
+    const wallet = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'USDT' } },
+    });
+    expect(String(wallet.available)).toBe('90');
+    expect(String(wallet.reserved)).toBe('10');
+  });
+
   it('rejects accept without Idempotency-Key', async () => {
     const quoteId = await createQuote('10');
     const server = app.getHttpServer() as App;

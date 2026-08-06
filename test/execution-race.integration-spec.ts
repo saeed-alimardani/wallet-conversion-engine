@@ -331,4 +331,78 @@ describe('Execution race conditions (integration)', () => {
     await prisma.quote.deleteMany({ where: { userId: lonelyUser } });
     await prisma.walletAccount.deleteMany({ where: { userId: lonelyUser } });
   });
+
+  it('settles concurrent conversions into one atomically-created target wallet', async () => {
+    exchange.setMode('SUCCESS');
+    const concurrentUser = `exec-target-race-${randomUUID()}`;
+    await prisma.walletAccount.create({
+      data: {
+        id: randomUUID(),
+        userId: concurrentUser,
+        asset: 'USDT',
+        balance: '100',
+        available: '100',
+        reserved: '0',
+      },
+    });
+    const server = app.getHttpServer() as App;
+
+    const executions: Array<{
+      conversionId: string;
+      payload: ConversionExecutionRequestedPayload;
+    }> = [];
+    for (const sourceAmount of ['10', '15']) {
+      const quote = await request(server).post('/quotes').send({
+        userId: concurrentUser,
+        sourceAsset: 'USDT',
+        targetAsset: 'BTC',
+        sourceAmount,
+      });
+      const quoteId = (quote.body as { quoteId: string }).quoteId;
+      const accepted = await request(server)
+        .post(`/quotes/${quoteId}/accept`)
+        .set('Idempotency-Key', randomUUID())
+        .send();
+      expect(accepted.status).toBe(201);
+      const conversionId = (accepted.body as AcceptQuoteSuccessBody).conversionId;
+      const outbox = await prisma.outboxMessage.findFirstOrThrow({
+        where: { aggregateId: conversionId },
+      });
+      executions.push({
+        conversionId,
+        payload: outbox.payload as unknown as ConversionExecutionRequestedPayload,
+      });
+    }
+
+    await Promise.all(executions.map(({ payload }) => processExecution.execute(payload)));
+
+    const conversions = await prisma.conversion.findMany({
+      where: { id: { in: executions.map(({ conversionId }) => conversionId) } },
+    });
+    expect(conversions.map(({ status }) => status).sort()).toEqual(['COMPLETED', 'COMPLETED']);
+    const targetWallet = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId: concurrentUser, asset: 'BTC' } },
+    });
+    const expectedCredit = conversions.reduce(
+      (total, conversion) => total.add(conversion.targetAmount),
+      targetWallet.available.sub(targetWallet.available),
+    );
+    expect(String(targetWallet.available)).toBe(String(expectedCredit));
+    expect(
+      await prisma.walletAccount.count({
+        where: { userId: concurrentUser, asset: 'BTC' },
+      }),
+    ).toBe(1);
+
+    const conversionIds = executions.map(({ conversionId }) => conversionId);
+    await prisma.fakeExchangeExecution.deleteMany({
+      where: { conversionId: { in: conversionIds } },
+    });
+    await prisma.processedMessage.deleteMany({ where: { conversionId: { in: conversionIds } } });
+    await prisma.outboxMessage.deleteMany({ where: { aggregateId: { in: conversionIds } } });
+    await prisma.idempotencyRecord.deleteMany({ where: { conversionId: { in: conversionIds } } });
+    await prisma.conversion.deleteMany({ where: { id: { in: conversionIds } } });
+    await prisma.quote.deleteMany({ where: { userId: concurrentUser } });
+    await prisma.walletAccount.deleteMany({ where: { userId: concurrentUser } });
+  });
 });

@@ -56,6 +56,28 @@ export class PrismaWalletRepository implements WalletRepository {
     });
   }
 
+  async createIfMissing(wallet: WalletAccount): Promise<void> {
+    if (!wallet.balance.isZero) {
+      throw new WalletInvariantViolationError('createIfMissing requires a zero-balance wallet');
+    }
+    await this.db.$executeRaw`
+      INSERT INTO wallet_accounts
+        (id, user_id, asset, balance, available, reserved, created_at, updated_at)
+      VALUES
+        (
+          ${wallet.id},
+          ${wallet.userId.toString()},
+          ${wallet.asset.code},
+          0,
+          0,
+          0,
+          NOW(),
+          NOW()
+        )
+      ON CONFLICT (user_id, asset) DO NOTHING
+    `;
+  }
+
   async reserve(userId: UserId, asset: Asset, amount: Money): Promise<ReservationOutcome> {
     const rows = await this.db.$queryRaw<WalletAccountRow[]>`
       UPDATE wallet_accounts

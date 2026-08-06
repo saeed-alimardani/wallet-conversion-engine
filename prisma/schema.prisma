@@ -96,7 +96,8 @@ model OutboxMessage {
 }
 
 // Stripe-style idempotency for POST /quotes/:id/accept.
-// Unique (scope, idempotencyKey). Retention: 24h (documented in README / DECISIONS).
+// Idempotency keys are globally unique. Scope is retained for operation ownership/auditing.
+// Retention: 24h, enforced by the bounded cleanup service.
 // Concurrent duplicates: unique constraint; loser reads winner's stored response.
 // Body fingerprint mismatch → 409 Conflict.
 model IdempotencyRecord {
@@ -110,7 +111,7 @@ model IdempotencyRecord {
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @updatedAt @map("updated_at")
 
-  @@unique([scope, idempotencyKey])
+  @@unique([idempotencyKey])
   @@index([createdAt])
   @@map("idempotency_records")
 }

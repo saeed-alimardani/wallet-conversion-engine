@@ -6,6 +6,7 @@ import { AcceptQuoteUseCase } from './application/accept-quote.use-case';
 import { GetConversionUseCase } from './application/get-conversion.use-case';
 import { ProcessConversionExecutionUseCase } from './application/process-conversion-execution.use-case';
 import { FakeExchangeAdapter } from './infrastructure/fake-exchange.adapter';
+import { IdempotencyCleanupService } from './infrastructure/idempotency-cleanup.service';
 import { PrismaConversionRepository } from './infrastructure/prisma-conversion.repository';
 import { PrismaIdempotencyRepository } from './infrastructure/prisma-idempotency.repository';
 import { PrismaOutboxRepository } from './infrastructure/prisma-outbox.repository';
@@ -37,6 +38,7 @@ import {
     OutboxPublisherService,
     ExecutionConsumerService,
     FakeExchangeAdapter,
+    IdempotencyCleanupService,
     { provide: UNIT_OF_WORK, useExisting: PrismaUnitOfWork },
     { provide: CONVERSION_REPOSITORY, useClass: PrismaConversionRepository },
     { provide: OUTBOX_REPOSITORY, useClass: PrismaOutboxRepository },
