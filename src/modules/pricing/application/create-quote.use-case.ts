@@ -18,6 +18,13 @@ export interface CreateQuoteCommand {
   sourceAmount: string;
 }
 
+export class InvalidQuoteRequestError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidQuoteRequestError';
+  }
+}
+
 @Injectable()
 export class CreateQuoteUseCase {
   constructor(
@@ -28,20 +35,29 @@ export class CreateQuoteUseCase {
   ) {}
 
   async execute(command: CreateQuoteCommand): Promise<Quote> {
-    const userId = UserId.of(command.userId);
-    const sourceAsset = Asset.of(command.sourceAsset);
-    const targetAsset = Asset.of(command.targetAsset);
-    const sourceAmount = Money.of(command.sourceAmount, sourceAsset);
+    let quote: Quote;
+    try {
+      const userId = UserId.of(command.userId);
+      const sourceAsset = Asset.of(command.sourceAsset);
+      const targetAsset = Asset.of(command.targetAsset);
+      const sourceAmount = Money.of(command.sourceAmount, sourceAsset);
 
-    const rate = this.pricing.getRate(sourceAsset, targetAsset);
-    const quote = Quote.create({
-      id: QuoteId.of(this.ids.generate()),
-      userId,
-      sourceAmount,
-      rate,
-      createdAt: this.clock.now(),
-    });
+      const rate = this.pricing.getRate(sourceAsset, targetAsset);
+      quote = Quote.create({
+        id: QuoteId.of(this.ids.generate()),
+        userId,
+        sourceAmount,
+        rate,
+        createdAt: this.clock.now(),
+      });
+    } catch (error: unknown) {
+      throw new InvalidQuoteRequestError(
+        error instanceof Error ? error.message : 'Quote request is invalid',
+      );
+    }
 
+    // Persistence failures are deliberately outside the input-error boundary.
+    // They must surface as 500s rather than being leaked or misreported as client errors.
     await this.quotes.save(quote);
     return quote;
   }

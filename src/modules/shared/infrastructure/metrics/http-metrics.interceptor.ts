@@ -1,4 +1,10 @@
-import { CallHandler, ExecutionContext, Injectable, NestInterceptor } from '@nestjs/common';
+import {
+  CallHandler,
+  ExecutionContext,
+  HttpException,
+  Injectable,
+  NestInterceptor,
+} from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
 import { Request, Response } from 'express';
 import { MetricsService } from './metrics.service';
@@ -24,12 +30,18 @@ export class HttpMetricsInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap({
         next: () => this.observe(req, res, started),
-        error: () => this.observe(req, res, started),
+        error: (error: unknown) =>
+          this.observe(req, res, started, error instanceof HttpException ? error.getStatus() : 500),
       }),
     );
   }
 
-  private observe(req: Request, res: Response, started: bigint): void {
+  private observe(
+    req: Request,
+    res: Response,
+    started: bigint,
+    statusCode = res.statusCode || 500,
+  ): void {
     const seconds = Number(process.hrtime.bigint() - started) / 1e9;
     const route = this.routeLabel(req);
     // Skip scraping /metrics itself to avoid feedback noise.
@@ -40,7 +52,7 @@ export class HttpMetricsInterceptor implements NestInterceptor {
       {
         method: req.method,
         route,
-        status_code: String(res.statusCode || 500),
+        status_code: String(statusCode),
       },
       seconds,
     );
@@ -53,6 +65,6 @@ export class HttpMetricsInterceptor implements NestInterceptor {
       const base = typeof req.baseUrl === 'string' ? req.baseUrl : '';
       return `${base}${routePath}`;
     }
-    return req.path || 'unknown';
+    return 'unmatched';
   }
 }

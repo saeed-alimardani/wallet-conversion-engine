@@ -1,16 +1,8 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  HttpCode,
-  HttpStatus,
-  Post,
-} from '@nestjs/common';
+import { BadRequestException, Body, Controller, HttpCode, HttpStatus, Post } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import { MetricsService } from '../../shared/infrastructure/metrics/metrics.service';
-import { CreateQuoteUseCase } from '../application/create-quote.use-case';
+import { CreateQuoteUseCase, InvalidQuoteRequestError } from '../application/create-quote.use-case';
 import { Quote } from '../domain/quote';
-import { UnsupportedAssetPairError } from '../infrastructure/fake-pricing.provider';
 import { CreateQuoteDto } from './dto/create-quote.dto';
 
 export interface QuoteResponse {
@@ -47,13 +39,7 @@ export class QuotesController {
       });
       return this.toResponse(quote);
     } catch (error: unknown) {
-      if (error instanceof UnsupportedAssetPairError) {
-        throw new BadRequestException({
-          errorCode: 'UNSUPPORTED_ASSET_PAIR',
-          message: error.message,
-        });
-      }
-      if (error instanceof Error) {
+      if (error instanceof InvalidQuoteRequestError) {
         throw new BadRequestException({
           errorCode: 'INVALID_QUOTE_REQUEST',
           message: error.message,

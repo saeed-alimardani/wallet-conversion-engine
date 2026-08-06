@@ -95,6 +95,59 @@ describe('Quotes (e2e)', () => {
     });
 
     expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({
+      statusCode: 400,
+      errorCode: 'VALIDATION_ERROR',
+    });
+  });
+
+  it('POST /quotes rejects oversized input and unknown properties', async () => {
+    const server = app.getHttpServer() as App;
+    const oversized = await request(server)
+      .post('/quotes')
+      .send({
+        userId: 'u'.repeat(129),
+        sourceAsset: 'USDT',
+        targetAsset: 'BTC',
+        sourceAmount: '1',
+      });
+    expect(oversized.status).toBe(400);
+    expect(oversized.body).toMatchObject({ errorCode: 'VALIDATION_ERROR' });
+
+    const unknownProperty = await request(server).post('/quotes').send({
+      userId: 'user-123',
+      sourceAsset: 'USDT',
+      targetAsset: 'BTC',
+      sourceAmount: '1',
+      admin: true,
+    });
+    expect(unknownProperty.status).toBe(400);
+    expect(unknownProperty.body).toMatchObject({ errorCode: 'VALIDATION_ERROR' });
+  });
+
+  it('echoes safe correlation ids and replaces oversized values', async () => {
+    const server = app.getHttpServer() as App;
+    const missing = await request(server).get('/route-that-does-not-exist').set({
+      'X-Correlation-Id': 'client-trace-123',
+    });
+    expect(missing.status).toBe(404);
+    expect(missing.headers['x-correlation-id']).toBe('client-trace-123');
+    expect(missing.body).toMatchObject({
+      statusCode: 404,
+      errorCode: 'NOT_FOUND',
+      correlationId: 'client-trace-123',
+    });
+
+    const replaced = await request(server)
+      .get('/route-that-does-not-exist')
+      .set({
+        'X-Correlation-Id': 'x'.repeat(129),
+      });
+    expect(replaced.status).toBe(404);
+    expect(replaced.headers['x-correlation-id']).not.toBe('x'.repeat(129));
+    expect(replaced.headers['x-correlation-id']).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
   });
 
   it('POST /quotes rejects zero sourceAmount', async () => {

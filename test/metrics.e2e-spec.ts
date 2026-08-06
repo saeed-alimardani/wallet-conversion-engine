@@ -215,6 +215,14 @@ describe('Observability /metrics (e2e)', () => {
     expect(retryAfter).toBeGreaterThanOrEqual(retryBefore + 1);
     expect(after).toContain('event_processing_duration_seconds_bucket');
     expect(after).toContain('http_request_duration_seconds_bucket');
+
+    await expect(processExecution.execute({ ...payload, eventId: randomUUID() })).rejects.toThrow(
+      /bound to execution event/,
+    );
+    const afterRejectedEvent = await scrape();
+    expect(afterRejectedEvent).toMatch(
+      /event_processing_duration_seconds_count\{outcome="error"\}\s+[1-9]/,
+    );
   });
 
   it('does not put high-cardinality ids into metric label sets', async () => {

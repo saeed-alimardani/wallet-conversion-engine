@@ -50,6 +50,18 @@ export class ProcessConversionExecutionUseCase {
 
   async execute(payload: ConversionExecutionRequestedPayload): Promise<void> {
     const started = process.hrtime.bigint();
+    try {
+      await this.process(payload, started);
+    } catch (error: unknown) {
+      this.observeDuration('error', started);
+      throw error;
+    }
+  }
+
+  private async process(
+    payload: ConversionExecutionRequestedPayload,
+    started: bigint,
+  ): Promise<void> {
     const eventId = payload.eventId;
     const conversionId = ConversionId.of(payload.conversionId);
 
@@ -132,6 +144,7 @@ export class ProcessConversionExecutionUseCase {
       );
       if (!claimed) {
         this.metrics.executionRetryTotal.inc();
+        this.observeDuration('replay', started);
         return;
       }
 
@@ -170,6 +183,13 @@ export class ProcessConversionExecutionUseCase {
       operationResult: executionResult.outcome === 'SUCCESS' ? 'success' : 'failure',
       errorCode: executionResult.reason,
     });
+  }
+
+  private observeDuration(outcome: string, started: bigint): void {
+    this.metrics.eventProcessingDurationSeconds.observe(
+      { outcome },
+      Number(process.hrtime.bigint() - started) / 1e9,
+    );
   }
 
   private async applyOutcome(

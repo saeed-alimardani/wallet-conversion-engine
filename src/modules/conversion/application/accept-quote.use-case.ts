@@ -82,12 +82,12 @@ export class AcceptQuoteUseCase {
   async execute(command: AcceptQuoteCommand): Promise<AcceptQuoteResult> {
     const quoteIdValue = command.quoteId.trim();
     const idempotencyKey = command.idempotencyKey.trim();
-    if (!quoteIdValue) {
+    if (!quoteIdValue || quoteIdValue.length > 128) {
       return {
         kind: 'error',
         statusCode: 400,
         errorCode: 'INVALID_QUOTE_ID',
-        message: 'quoteId must not be empty',
+        message: 'quoteId must contain between 1 and 128 characters',
       };
     }
     if (!idempotencyKey) {
@@ -96,6 +96,14 @@ export class AcceptQuoteUseCase {
         statusCode: 400,
         errorCode: 'MISSING_IDEMPOTENCY_KEY',
         message: 'Idempotency-Key header is required',
+      };
+    }
+    if (idempotencyKey.length > 255 || !/^[\x21-\x7e]+$/.test(idempotencyKey)) {
+      return {
+        kind: 'error',
+        statusCode: 400,
+        errorCode: 'INVALID_IDEMPOTENCY_KEY',
+        message: 'Idempotency-Key must contain at most 255 visible ASCII characters',
       };
     }
 

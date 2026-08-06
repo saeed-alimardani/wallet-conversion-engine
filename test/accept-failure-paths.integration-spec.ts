@@ -95,6 +95,20 @@ describe('Accept failure paths (integration)', () => {
     expect(res.body).toMatchObject({ errorCode: 'QUOTE_NOT_FOUND' });
   });
 
+  it('rejects an oversized idempotency key before persistence', async () => {
+    const server = app.getHttpServer() as App;
+    const res = await request(server)
+      .post(`/quotes/${randomUUID()}/accept`)
+      .set('Idempotency-Key', 'k'.repeat(256))
+      .send();
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ errorCode: 'INVALID_IDEMPOTENCY_KEY' });
+    expect(
+      await prisma.idempotencyRecord.count({ where: { idempotencyKey: 'k'.repeat(256) } }),
+    ).toBe(0);
+  });
+
   it('returns 409 QUOTE_EXPIRED when the quote TTL has elapsed', async () => {
     const quoteId = await createQuote('10');
     await prisma.quote.update({
