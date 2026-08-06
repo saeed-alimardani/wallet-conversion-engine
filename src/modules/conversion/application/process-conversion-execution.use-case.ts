@@ -134,18 +134,14 @@ export class ProcessConversionExecutionUseCase {
     });
 
     const now = this.clock.now();
-    let settled = false;
-
-    await this.uow.execute(async (ctx) => {
+    const settlement = await this.uow.execute(async (ctx) => {
       const claimed = await ctx.processedMessages.tryRecord(
         eventId,
         payload.conversionId,
         executionResult.outcome,
       );
       if (!claimed) {
-        this.metrics.executionRetryTotal.inc();
-        this.observeDuration('replay', started);
-        return;
+        return { claimed: false, settled: false };
       }
 
       const fresh = await ctx.conversions.findById(conversionId);
@@ -159,10 +155,25 @@ export class ProcessConversionExecutionUseCase {
 
       const previousStatus = fresh.status;
       await this.applyOutcome(ctx, fresh, executionResult.outcome, now, executionResult.reason);
-      settled = previousStatus !== 'COMPLETED' && previousStatus !== 'FAILED';
+      return {
+        claimed: true,
+        settled: previousStatus !== 'COMPLETED' && previousStatus !== 'FAILED',
+      };
     });
 
-    if (settled) {
+    if (!settlement.claimed) {
+      this.metrics.executionRetryTotal.inc();
+      this.observeDuration('replay', started);
+      this.logger.log({
+        msg: 'execution_event_already_claimed',
+        eventId,
+        conversionId: payload.conversionId,
+        operationResult: 'replay',
+      });
+      return;
+    }
+
+    if (settlement.settled) {
       if (executionResult.outcome === 'SUCCESS') {
         this.metrics.conversionCompletedTotal.inc();
       } else if (executionResult.outcome === 'FAILURE') {
@@ -249,7 +260,7 @@ export class ProcessConversionExecutionUseCase {
           operationResult: 'failure',
           err: error.message,
         });
-        return;
+        throw error;
       }
       throw error;
     }

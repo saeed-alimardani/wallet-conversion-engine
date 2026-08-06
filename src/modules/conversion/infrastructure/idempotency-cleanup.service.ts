@@ -85,7 +85,6 @@ export class IdempotencyCleanupService implements OnModuleInit, OnModuleDestroy 
     this.logger.error({
       msg: 'idempotency_cleanup_failed',
       errorCode: error instanceof Error ? error.name : 'Error',
-      err: error instanceof Error ? error.message : String(error),
       operationResult: 'failure',
     });
   }

@@ -161,6 +161,32 @@ describe('Quotes (e2e)', () => {
     expect(response.status).toBe(400);
   });
 
+  it.each(['0.0', '0.00000000'])('POST /quotes rejects zero-like amount %p', async (amount) => {
+    const server = app.getHttpServer() as App;
+    const response = await request(server).post('/quotes').send({
+      userId: 'user-123',
+      sourceAsset: 'USDT',
+      targetAsset: 'BTC',
+      sourceAmount: amount,
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ errorCode: 'VALIDATION_ERROR' });
+  });
+
+  it('POST /quotes rejects a whitespace-only userId at the boundary', async () => {
+    const server = app.getHttpServer() as App;
+    const response = await request(server).post('/quotes').send({
+      userId: '   ',
+      sourceAsset: 'USDT',
+      targetAsset: 'BTC',
+      sourceAmount: '1',
+    });
+
+    expect(response.status).toBe(400);
+    expect(response.body).toMatchObject({ errorCode: 'VALIDATION_ERROR' });
+  });
+
   it('POST /quotes rejects same source and target asset', async () => {
     const server = app.getHttpServer() as App;
     const response = await request(server).post('/quotes').send({

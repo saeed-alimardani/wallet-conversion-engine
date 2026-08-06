@@ -94,4 +94,17 @@ describe('OutboxPublisherService', () => {
     expect(publish).toHaveBeenCalledTimes(1);
     expect(failureIncrement).toHaveBeenCalledTimes(1);
   });
+
+  it('does not classify a post-confirmation database failure as a broker failure', async () => {
+    const { publisher, publish, markPublished, failureIncrement } = setup([
+      message('event-1'),
+      message('event-2'),
+    ]);
+    markPublished.mockRejectedValueOnce(new Error('database unavailable'));
+
+    await expect(publisher.publishBatch()).resolves.toBe(0);
+    expect(publish).toHaveBeenCalledTimes(1);
+    expect(markPublished).toHaveBeenCalledTimes(1);
+    expect(failureIncrement).not.toHaveBeenCalled();
+  });
 });

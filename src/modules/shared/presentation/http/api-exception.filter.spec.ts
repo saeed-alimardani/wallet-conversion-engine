@@ -1,4 +1,4 @@
-import { ArgumentsHost, BadRequestException, HttpException, Logger } from '@nestjs/common';
+import { ArgumentsHost, BadRequestException, Logger } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { ApiExceptionFilter } from './api-exception.filter';
 
@@ -45,16 +45,6 @@ describe('ApiExceptionFilter', () => {
       errorCode: 'VALIDATION_ERROR',
       message: ['sourceAmount must be a string'],
     });
-  });
-
-  it('preserves the stored response body used by successful idempotent replays', () => {
-    const { host, status, json } = httpHost({ method: 'POST' });
-    const replay = { conversionId: 'conversion-1', status: 'FUNDS_RESERVED' };
-
-    new ApiExceptionFilter().catch(new HttpException(replay, 201), host);
-
-    expect(status).toHaveBeenCalledWith(201);
-    expect(json).toHaveBeenCalledWith(replay);
   });
 });
 

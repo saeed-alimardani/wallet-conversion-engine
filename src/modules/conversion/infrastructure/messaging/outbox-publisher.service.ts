@@ -42,12 +42,10 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
     }
     this.timer = setInterval(() => {
       void this.publishBatch().catch((error: unknown) => {
-        this.metrics.outboxPublishFailureTotal.inc();
         this.logger.error({
-          msg: 'outbox_publish_batch_failed',
-          errorCode: 'OUTBOX_PUBLISH_FAILURE',
+          msg: 'outbox_batch_failed',
+          errorCode: error instanceof Error ? error.name : 'Error',
           operationResult: 'failure',
-          err: error instanceof Error ? error.message : String(error),
         });
       });
     }, this.pollIntervalMs);
@@ -73,6 +71,19 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
       for (const message of batch) {
         try {
           await this.rabbit.publish(CONVERSION_EXECUTION_ROUTING_KEY, message.payload);
+        } catch (error: unknown) {
+          this.metrics.outboxPublishFailureTotal.inc();
+          this.logger.error({
+            msg: 'outbox_message_publish_failed',
+            eventId: message.id,
+            conversionId: message.aggregateId,
+            errorCode: error instanceof Error ? error.name : 'Error',
+            operationResult: 'failure',
+          });
+          break;
+        }
+
+        try {
           await this.outbox.markPublished(message.id, this.clock.now());
           published += 1;
           this.logger.log({
@@ -82,14 +93,12 @@ export class OutboxPublisherService implements OnModuleInit, OnModuleDestroy {
             operationResult: 'success',
           });
         } catch (error: unknown) {
-          this.metrics.outboxPublishFailureTotal.inc();
           this.logger.error({
-            msg: 'outbox_message_publish_failed',
+            msg: 'outbox_message_mark_published_failed',
             eventId: message.id,
             conversionId: message.aggregateId,
-            errorCode: 'OUTBOX_PUBLISH_FAILURE',
+            errorCode: error instanceof Error ? error.name : 'Error',
             operationResult: 'failure',
-            err: error instanceof Error ? error.message : String(error),
           });
           break;
         }

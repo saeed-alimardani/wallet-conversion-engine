@@ -175,13 +175,15 @@ describe('GET /conversions/:conversionId (integration)', () => {
     expect(res.body).toMatchObject({ errorCode: 'CONVERSION_NOT_FOUND' });
   });
 
-  it('returns 400 INVALID_CONVERSION_ID for whitespace-only id', async () => {
-    const server = app.getHttpServer() as App;
-    // Encode spaces so the path segment is preserved
-    const res = await request(server).get(`/conversions/${encodeURIComponent('   ')}`);
-    expect(res.status).toBe(400);
-    expect(res.body).toMatchObject({ errorCode: 'INVALID_CONVERSION_ID' });
-  });
+  it.each(['not-a-uuid', '   '])(
+    'returns 400 INVALID_CONVERSION_ID for malformed id %p',
+    async (conversionId) => {
+      const server = app.getHttpServer() as App;
+      const res = await request(server).get(`/conversions/${encodeURIComponent(conversionId)}`);
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ errorCode: 'INVALID_CONVERSION_ID' });
+    },
+  );
 
   it('is stable across repeated GETs (read-only, no state change)', async () => {
     exchange.setMode('SUCCESS');

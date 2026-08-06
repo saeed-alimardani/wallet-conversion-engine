@@ -8,6 +8,7 @@ export class CreateQuoteDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(128)
+  @Matches(/\S/, { message: 'userId must contain a non-whitespace character' })
   userId!: string;
 
   @IsString()
@@ -25,7 +26,7 @@ export class CreateQuoteDto {
   @IsString()
   @IsNotEmpty()
   @MaxLength(39)
-  @Matches(/^(?:0|[1-9]\d{0,19})(?:\.\d{1,18})?$/, {
+  @Matches(/^(?:0\.(?=\d{1,18}$)\d*[1-9]\d*|[1-9]\d{0,19}(?:\.\d{1,18})?)$/, {
     message:
       'sourceAmount must be a positive decimal string with at most 20 integer and 18 fractional digits',
   })

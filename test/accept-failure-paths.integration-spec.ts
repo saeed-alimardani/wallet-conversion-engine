@@ -95,6 +95,17 @@ describe('Accept failure paths (integration)', () => {
     expect(res.body).toMatchObject({ errorCode: 'QUOTE_NOT_FOUND' });
   });
 
+  it('returns 400 INVALID_QUOTE_ID for a malformed quoteId', async () => {
+    const server = app.getHttpServer() as App;
+    const res = await request(server)
+      .post('/quotes/not-a-uuid/accept')
+      .set('Idempotency-Key', randomUUID())
+      .send();
+
+    expect(res.status).toBe(400);
+    expect(res.body).toMatchObject({ errorCode: 'INVALID_QUOTE_ID' });
+  });
+
   it('rejects an oversized idempotency key before persistence', async () => {
     const server = app.getHttpServer() as App;
     const res = await request(server)

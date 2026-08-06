@@ -172,7 +172,7 @@ describe('Accept quote (integration)', () => {
       .send();
     expect(second.status).toBe(201);
     const secondBody = second.body as AcceptQuoteSuccessBody;
-    expect(secondBody.conversionId).toBe(firstBody.conversionId);
+    expect(secondBody).toEqual(firstBody);
 
     const wallet = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_asset: { userId, asset: 'USDT' } },

@@ -28,10 +28,6 @@ export class ApiExceptionFilter implements ExceptionFilter {
     if (response.headersSent) {
       return;
     }
-    if (exception instanceof HttpException && exception.getStatus() < 400) {
-      response.status(exception.getStatus()).json(exception.getResponse());
-      return;
-    }
 
     const envelope = this.toEnvelope(exception, request);
     const log = {

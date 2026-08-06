@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import { ConfigService } from '@nestjs/config';
-import amqp, { ChannelModel, ConfirmChannel, ConsumeMessage } from 'amqplib';
+import amqp, { ChannelModel, ConfirmChannel, ConsumeMessage, Options } from 'amqplib';
 import {
   CONVERSION_EXECUTION_DEAD_LETTER_ROUTING_KEY,
   CONVERSION_EXECUTION_ROUTING_KEY,
@@ -20,7 +20,12 @@ type ChannelDouble = ConfirmChannel & {
     ack: jest.Mock;
     nack: jest.Mock;
     consumer: ((incoming: ConsumeMessage | null) => void) | null;
-    published: Array<{ routingKey: string; headers: Record<string, unknown> }>;
+    published: Array<{
+      routingKey: string;
+      headers: Record<string, unknown>;
+      messageId?: string;
+      correlationId?: string;
+    }>;
   };
 };
 
@@ -44,15 +49,25 @@ function deferred(): {
 
 function channelDouble(): ChannelDouble {
   const channel = new EventEmitter() as ChannelDouble;
-  const published: Array<{ routingKey: string; headers: Record<string, unknown> }> = [];
+  const published: ChannelDouble['testMocks']['published'] = [];
   const testMocks = {
     publish: jest.fn(
-      (_exchange: string, routingKey: string, _body: Buffer, options: { headers?: unknown }) => {
+      (_exchange: string, routingKey: string, _body: Buffer, options?: Options.Publish) => {
+        const publishOptions = options ?? {};
         const headers =
-          typeof options.headers === 'object' && options.headers !== null
-            ? (options.headers as Record<string, unknown>)
+          typeof publishOptions.headers === 'object' && publishOptions.headers !== null
+            ? (publishOptions.headers as Record<string, unknown>)
             : {};
-        published.push({ routingKey, headers });
+        published.push({
+          routingKey,
+          headers,
+          ...(typeof publishOptions.messageId === 'string'
+            ? { messageId: publishOptions.messageId }
+            : {}),
+          ...(typeof publishOptions.correlationId === 'string'
+            ? { correlationId: publishOptions.correlationId }
+            : {}),
+        });
         return true;
       },
     ),
@@ -125,7 +140,7 @@ function message(retryCount = 0): ConsumeMessage {
       headers: { 'x-retry-count': retryCount },
       deliveryMode: 2,
       priority: undefined,
-      correlationId: undefined,
+      correlationId: 'event-1',
       replyTo: undefined,
       expiration: undefined,
       messageId: 'event-1',
@@ -178,6 +193,10 @@ describe('RabbitMqConnection', () => {
     confirmation.resolve();
     await publishing;
     expect(settled).toBe(true);
+    expect(channel.testMocks.published[0]).toMatchObject({
+      messageId: 'event-1',
+      correlationId: 'event-1',
+    });
     await rabbit.onModuleDestroy();
   });
 
@@ -263,6 +282,10 @@ describe('RabbitMqConnection', () => {
     await eventually(() => expect(channel.testMocks.ack).toHaveBeenCalledTimes(1));
     expect(channel.testMocks.published[0].routingKey).toBe(CONVERSION_EXECUTION_ROUTING_KEY);
     expect(channel.testMocks.published[0].headers['x-retry-count']).toBe(1);
+    expect(channel.testMocks.published[0]).toMatchObject({
+      messageId: 'event-1',
+      correlationId: 'event-1',
+    });
 
     consumeCallback(message(1));
     await eventually(() => expect(channel.testMocks.ack).toHaveBeenCalledTimes(2));
@@ -270,6 +293,10 @@ describe('RabbitMqConnection', () => {
       CONVERSION_EXECUTION_DEAD_LETTER_ROUTING_KEY,
     );
     expect(channel.testMocks.published[1].headers['x-retry-count']).toBe(1);
+    expect(channel.testMocks.published[1]).toMatchObject({
+      messageId: 'event-1',
+      correlationId: 'event-1',
+    });
     expect(channel.testMocks.nack).not.toHaveBeenCalled();
     await rabbit.onModuleDestroy();
   });

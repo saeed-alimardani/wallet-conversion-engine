@@ -90,6 +90,7 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
       contentType: 'application/json',
       deliveryMode: 2,
       messageId,
+      correlationId: messageId,
     });
   }
 
@@ -134,7 +135,6 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
           attempt,
           maxAttempts: this.connectMaxAttempts,
           errorCode: error instanceof Error ? error.name : 'Error',
-          err: error instanceof Error ? error.message : String(error),
         });
         if (attempt < this.connectMaxAttempts) {
           await this.delay(this.retryDelay(attempt));
@@ -203,7 +203,7 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
 
   private registerLifecycleHandlers(connection: AmqpConnection, channel: ConfirmChannel): void {
     connection.on('error', (error: Error) => {
-      this.logger.error({ msg: 'rabbitmq_connection_error', err: error.message });
+      this.logger.error({ msg: 'rabbitmq_connection_error', errorCode: error.name });
     });
     connection.on('close', () => {
       if (this.connection !== connection) {
@@ -216,7 +216,7 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
       this.scheduleReconnect();
     });
     channel.on('error', (error: Error) => {
-      this.logger.error({ msg: 'rabbitmq_channel_error', err: error.message });
+      this.logger.error({ msg: 'rabbitmq_channel_error', errorCode: error.name });
     });
     channel.on('close', () => {
       if (this.channel !== channel) {
@@ -241,7 +241,6 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
         this.logger.error({
           msg: 'rabbitmq_reconnect_exhausted',
           errorCode: error instanceof Error ? error.name : 'Error',
-          err: error instanceof Error ? error.message : String(error),
         });
         this.scheduleReconnect(this.retryMaxDelayMs);
       });
@@ -279,13 +278,14 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
     error: unknown,
   ): Promise<void> {
     const retryCount = this.retryCount(message);
+    const identity = this.messageIdentity(message);
     this.logger.error({
       msg: 'rabbitmq_consumer_handler_failed',
+      ...identity,
       retryCount,
       maxRetries: this.consumerMaxRetries,
       errorCode: error instanceof Error ? error.name : 'Error',
       operationResult: 'failure',
-      err: error instanceof Error ? error.message : String(error),
     });
 
     try {
@@ -317,14 +317,15 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
       channel.ack(message);
       this.logger.error({
         msg: 'rabbitmq_message_dead_lettered',
+        ...identity,
         retryCount,
         operationResult: 'failure',
       });
     } catch (publishError: unknown) {
       this.logger.error({
         msg: 'rabbitmq_retry_publish_failed',
+        ...identity,
         errorCode: publishError instanceof Error ? publishError.name : 'Error',
-        err: publishError instanceof Error ? publishError.message : String(publishError),
       });
       try {
         channel.nack(message, false, true);
@@ -359,11 +360,25 @@ export class RabbitMqConnection implements OnModuleInit, OnModuleDestroy {
     headers: Record<string, unknown>,
   ): Options.Publish {
     const rawMessageId: unknown = message.properties.messageId as unknown;
+    const rawCorrelationId: unknown = message.properties.correlationId as unknown;
     return {
       contentType: 'application/json',
       headers,
       deliveryMode: 2,
       ...(typeof rawMessageId === 'string' ? { messageId: rawMessageId } : {}),
+      ...(typeof rawCorrelationId === 'string' ? { correlationId: rawCorrelationId } : {}),
+    };
+  }
+
+  private messageIdentity(message: ConsumeMessage): {
+    messageId?: string;
+    correlationId?: string;
+  } {
+    const messageId: unknown = message.properties.messageId as unknown;
+    const correlationId: unknown = message.properties.correlationId as unknown;
+    return {
+      ...(typeof messageId === 'string' ? { messageId } : {}),
+      ...(typeof correlationId === 'string' ? { correlationId } : {}),
     };
   }
 

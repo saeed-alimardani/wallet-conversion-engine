@@ -4,12 +4,22 @@ import {
   Get,
   NotFoundException,
   Param,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 import {
   ConversionStatusResponse,
   GetConversionUseCase,
 } from '../application/get-conversion.use-case';
+
+const CONVERSION_ID_PIPE = new ParseUUIDPipe({
+  version: '4',
+  exceptionFactory: () =>
+    new BadRequestException({
+      errorCode: 'INVALID_CONVERSION_ID',
+      message: 'conversionId must be a valid UUID',
+    }),
+});
 
 @Controller('conversions')
 export class ConversionsController {
@@ -20,7 +30,9 @@ export class ConversionsController {
   ) {}
 
   @Get(':conversionId')
-  async getById(@Param('conversionId') conversionId: string): Promise<ConversionStatusResponse> {
+  async getById(
+    @Param('conversionId', CONVERSION_ID_PIPE) conversionId: string,
+  ): Promise<ConversionStatusResponse> {
     const result = await this.getConversion.execute(conversionId);
 
     if (result.kind === 'found') {

@@ -1,5 +1,5 @@
-import { Global, Module } from '@nestjs/common';
-import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
+import { Global, Module, ValidationPipe } from '@nestjs/common';
+import { APP_FILTER, APP_INTERCEPTOR, APP_PIPE } from '@nestjs/core';
 import { PrismaModule } from './infrastructure/prisma/prisma.module';
 import { HealthController } from './presentation/health/health.controller';
 import { SystemClock } from './infrastructure/system-clock';
@@ -22,6 +22,14 @@ import { ApiExceptionFilter } from './presentation/http/api-exception.filter';
     { provide: CLOCK, useClass: SystemClock },
     { provide: ID_GENERATOR, useClass: UuidIdGenerator },
     MetricsService,
+    {
+      provide: APP_PIPE,
+      useValue: new ValidationPipe({
+        whitelist: true,
+        forbidNonWhitelisted: true,
+        transform: true,
+      }),
+    },
     { provide: APP_INTERCEPTOR, useClass: HttpMetricsInterceptor },
     { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],
