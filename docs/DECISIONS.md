@@ -18,8 +18,10 @@ WHERE user_id = :userId
   AND available >= :amount;
 ```
 
-Zero rows updated ⇒ insufficient funds or lost race. Domain `WalletAccount.reserve()` still
-enforces the invariant in memory before/after mapping. No optimistic `version` column.
+Zero rows updated ⇒ insufficient funds or lost race. The repository reconstitutes the returned
+row through `WalletAccount.reconstitute()`, which re-validates the balance invariant. Aggregate
+`reserve()` / `release()` methods remain unit-tested independently. No optimistic `version`
+column.
 
 **Consequences:**
 

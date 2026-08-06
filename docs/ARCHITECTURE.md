@@ -45,8 +45,10 @@ Each module uses layers: `domain` → `application` → `infrastructure` / `pres
 
 ## Dependency direction
 
-- **Domain** depends on nothing external: no NestJS, Prisma, HTTP, amqplib, or Prometheus.
-- **Application** depends on domain ports (repositories, UnitOfWork, Clock, ExchangeExecution).
+- **Domain** has no NestJS, Prisma, HTTP, amqplib, or Prometheus dependencies. The only approved
+  external library is `decimal.js` for exact money arithmetic.
+- **Application** orchestrates domain ports (repositories, UnitOfWork, Clock, ExchangeExecution)
+  and may use Nest DI wiring plus shared metrics recording.
 - **Infrastructure** implements ports (Prisma repositories, RabbitMQ, fake adapters).
 - **Presentation** (controllers) depends on application use cases and maps HTTP ↔ DTOs.
 - Cross-context coordination (accept) lives in the **conversion** application layer and uses
