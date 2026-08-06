@@ -7,11 +7,12 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-wallet}
       POSTGRES_DB: ${POSTGRES_DB:-wallet_conversion}
     ports:
-      - '5432:5432'
+      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-wallet} -d ${POSTGRES_DB:-wallet_conversion}']
+      test:
+        ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-wallet} -d ${POSTGRES_DB:-wallet_conversion}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -23,13 +24,26 @@ services:
       RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-wallet}
       RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-wallet}
     ports:
-      - '5672:5672' # AMQP
-      - '15672:15672' # Management UI
+      - '${RABBITMQ_PORT:-5672}:5672' # AMQP
+      - '${RABBITMQ_MANAGEMENT_PORT:-15672}:15672' # Management UI
     healthcheck:
       test: ['CMD', 'rabbitmq-diagnostics', '-q', 'ping']
       interval: 5s
       timeout: 5s
       retries: 10
+
+  migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: build
+    restart: 'no'
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet_conversion}?schema=public
+    command: ['sh', '-c', 'npx prisma migrate deploy && npm run prisma:seed']
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   app:
     build:
@@ -43,10 +57,16 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-wallet}:${POSTGRES_PASSWORD:-wallet}@postgres:5432/${POSTGRES_DB:-wallet_conversion}?schema=public
       RABBITMQ_URL: amqp://${RABBITMQ_USER:-wallet}:${RABBITMQ_PASSWORD:-wallet}@rabbitmq:5672
     ports:
-      - '3000:3000'
+      - '${APP_PORT:-3000}:3000'
+    healthcheck:
+      test: ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3000/health']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
     depends_on:
-      postgres:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       rabbitmq:
         condition: service_healthy
 

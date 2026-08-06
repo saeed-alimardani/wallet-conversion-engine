@@ -17,7 +17,12 @@ import { Asset, USDT, BTC } from '../src/modules/shared/domain/asset';
 const prisma = new PrismaClient();
 
 async function upsertWallet(userId: string, asset: Asset, initialBalance: string): Promise<void> {
-  const wallet = WalletAccount.open(randomUUID(), UserId.of(userId), asset, Money.of(initialBalance, asset));
+  const wallet = WalletAccount.open(
+    randomUUID(),
+    UserId.of(userId),
+    asset,
+    Money.of(initialBalance, asset),
+  );
   await prisma.walletAccount.upsert({
     where: { userId_asset: { userId, asset: asset.code } },
     update: {},
@@ -30,7 +35,6 @@ async function upsertWallet(userId: string, asset: Asset, initialBalance: string
       reserved: wallet.reserved.toString(),
     },
   });
-  // eslint-disable-next-line no-console
   console.log(`Seeded wallet: user=${userId} asset=${asset.code} balance=${initialBalance}`);
 }
 
@@ -46,6 +50,6 @@ main()
     console.error(error);
     process.exitCode = 1;
   })
-  .finally(() => {
-    void prisma.$disconnect();
+  .finally(async () => {
+    await prisma.$disconnect();
   });

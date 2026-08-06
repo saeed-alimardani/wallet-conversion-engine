@@ -40,8 +40,14 @@ curl http://localhost:3000/health
 Full stack including the app container:
 
 ```bash
-docker compose up --build
+docker compose up --build --wait
+npm run smoke:compose
 ```
+
+Compose waits for PostgreSQL and RabbitMQ, applies all production migrations, seeds
+`user-123`, and only then starts the API. The app is considered ready when `/health` succeeds.
+Host ports can be overridden with `POSTGRES_PORT`, `RABBITMQ_PORT`,
+`RABBITMQ_MANAGEMENT_PORT`, and `APP_PORT`.
 
 Fake exchange default outcome is controlled by `FAKE_EXCHANGE_MODE=SUCCESS|FAILURE|UNKNOWN`.
 
