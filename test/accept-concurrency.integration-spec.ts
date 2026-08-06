@@ -85,16 +85,22 @@ describe('Accept concurrency / race conditions (integration)', () => {
 
   it('same quote + two distinct keys concurrently: one 201, one 409; single conversion', async () => {
     const quoteId = await createQuote('25');
+    const keys = [randomUUID(), randomUUID()];
     const server = app.getHttpServer() as App;
 
     const [a, b] = await Promise.all([
-      request(server).post(`/quotes/${quoteId}/accept`).set('Idempotency-Key', randomUUID()).send(),
-      request(server).post(`/quotes/${quoteId}/accept`).set('Idempotency-Key', randomUUID()).send(),
+      request(server).post(`/quotes/${quoteId}/accept`).set('Idempotency-Key', keys[0]).send(),
+      request(server).post(`/quotes/${quoteId}/accept`).set('Idempotency-Key', keys[1]).send(),
     ]);
 
     const statuses = [a.status, b.status].sort();
     expect(statuses).toEqual([201, 409]);
+    const conversion = await prisma.conversion.findFirstOrThrow({ where: { quoteId } });
     expect(await prisma.conversion.count({ where: { quoteId } })).toBe(1);
+    expect(await prisma.outboxMessage.count({ where: { aggregateId: conversion.id } })).toBe(1);
+    expect(await prisma.idempotencyRecord.count({ where: { idempotencyKey: { in: keys } } })).toBe(
+      1,
+    );
 
     const wallet = await prisma.walletAccount.findUniqueOrThrow({
       where: { userId_asset: { userId, asset: 'USDT' } },

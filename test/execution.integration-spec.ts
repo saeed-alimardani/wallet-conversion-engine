@@ -14,6 +14,20 @@ import { ProcessConversionExecutionUseCase } from '../src/modules/conversion/app
 import { OutboxPublisherService } from '../src/modules/conversion/infrastructure/messaging/outbox-publisher.service';
 import { FakeExchangeAdapter } from '../src/modules/conversion/infrastructure/fake-exchange.adapter';
 import { ConversionExecutionRequestedPayload } from '../src/modules/conversion/domain/outbox-message';
+import {
+  CONVERSION_REPOSITORY,
+  PROCESSED_MESSAGE_REPOSITORY,
+  UNIT_OF_WORK,
+} from '../src/modules/conversion/tokens';
+import { ConversionRepository } from '../src/modules/conversion/domain/ports/conversion-repository.port';
+import { ProcessedMessageRepository } from '../src/modules/conversion/domain/ports/processed-message-repository.port';
+import {
+  UnitOfWork,
+  UnitOfWorkContext,
+} from '../src/modules/conversion/domain/ports/unit-of-work.port';
+import { Clock } from '../src/modules/shared/domain/ports/clock.port';
+import { CLOCK } from '../src/modules/shared/tokens';
+import { MetricsService } from '../src/modules/shared/infrastructure/metrics/metrics.service';
 
 /**
  * Requires `docker compose up -d postgres rabbitmq`.
@@ -149,6 +163,59 @@ describe('Execution pipeline (integration)', () => {
     expect(processed?.outcome).toBe('SUCCESS');
   });
 
+  it('rolls back wallet settlement and the processed marker when conversion persistence fails', async () => {
+    exchange.setMode('SUCCESS');
+    const { conversionId, eventPayload } = await createAndAccept('10');
+    const sourceBefore = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'USDT' } },
+    });
+    const targetBefore = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'BTC' } },
+    });
+    const realUow = app.get<UnitOfWork>(UNIT_OF_WORK);
+    const failingUow: UnitOfWork = {
+      execute: <T>(work: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> =>
+        realUow.execute((ctx) => {
+          const conversions: ConversionRepository = {
+            save: () => Promise.reject(new Error('forced conversion persistence failure')),
+            findById: (id) => ctx.conversions.findById(id),
+            markExecutionRequestedIfFundsReserved: (id, eventId) =>
+              ctx.conversions.markExecutionRequestedIfFundsReserved(id, eventId),
+          };
+          return work({ ...ctx, conversions });
+        }),
+    };
+    const faultInjectedProcessor = new ProcessConversionExecutionUseCase(
+      app.get<ProcessedMessageRepository>(PROCESSED_MESSAGE_REPOSITORY),
+      app.get<ConversionRepository>(CONVERSION_REPOSITORY),
+      exchange,
+      failingUow,
+      app.get<Clock>(CLOCK),
+      app.get(MetricsService),
+    );
+
+    await expect(faultInjectedProcessor.execute(eventPayload)).rejects.toThrow(
+      'forced conversion persistence failure',
+    );
+
+    const conversion = await prisma.conversion.findUniqueOrThrow({ where: { id: conversionId } });
+    const sourceAfter = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'USDT' } },
+    });
+    const targetAfter = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'BTC' } },
+    });
+    expect(conversion.status).toBe('EXECUTION_REQUESTED');
+    expect(String(sourceAfter.balance)).toBe(String(sourceBefore.balance));
+    expect(String(sourceAfter.available)).toBe(String(sourceBefore.available));
+    expect(String(sourceAfter.reserved)).toBe(String(sourceBefore.reserved));
+    expect(String(targetAfter.balance)).toBe(String(targetBefore.balance));
+    expect(String(targetAfter.available)).toBe(String(targetBefore.available));
+    expect(await prisma.processedMessage.count({ where: { eventId: eventPayload.eventId } })).toBe(
+      0,
+    );
+  });
+
   it('is idempotent on duplicate event delivery (no double settle)', async () => {
     exchange.setMode('SUCCESS');
     const { conversionId, eventPayload } = await createAndAccept('20');
@@ -251,15 +318,20 @@ describe('Execution pipeline (integration)', () => {
     });
     expect(quoteA.status).toBe(201);
     expect(quoteB.status).toBe(201);
+    const quoteIds = [
+      (quoteA.body as { quoteId: string }).quoteId,
+      (quoteB.body as { quoteId: string }).quoteId,
+    ];
+    const idempotencyKeys = [randomUUID(), randomUUID()];
 
     const [resA, resB] = await Promise.all([
       request(server)
-        .post(`/quotes/${(quoteA.body as { quoteId: string }).quoteId}/accept`)
-        .set('Idempotency-Key', randomUUID())
+        .post(`/quotes/${quoteIds[0]}/accept`)
+        .set('Idempotency-Key', idempotencyKeys[0])
         .send(),
       request(server)
-        .post(`/quotes/${(quoteB.body as { quoteId: string }).quoteId}/accept`)
-        .set('Idempotency-Key', randomUUID())
+        .post(`/quotes/${quoteIds[1]}/accept`)
+        .set('Idempotency-Key', idempotencyKeys[1])
         .send(),
     ]);
 
@@ -277,6 +349,18 @@ describe('Execution pipeline (integration)', () => {
     // cleanup
     const conversions = await prisma.conversion.findMany({ where: { userId: concurrentUser } });
     const ids = conversions.map((c) => c.id);
+    const quotes = await prisma.quote.findMany({
+      where: { id: { in: quoteIds } },
+      orderBy: { id: 'asc' },
+    });
+    expect(conversions).toHaveLength(1);
+    expect(quotes.map((quote) => quote.status).sort()).toEqual(['ACCEPTED', 'ACTIVE']);
+    expect(await prisma.outboxMessage.count({ where: { aggregateId: { in: ids } } })).toBe(1);
+    expect(
+      await prisma.idempotencyRecord.count({
+        where: { idempotencyKey: { in: idempotencyKeys } },
+      }),
+    ).toBe(1);
     await prisma.outboxMessage.deleteMany({ where: { aggregateId: { in: ids } } });
     await prisma.idempotencyRecord.deleteMany({ where: { conversionId: { in: ids } } });
     await prisma.conversion.deleteMany({ where: { userId: concurrentUser } });

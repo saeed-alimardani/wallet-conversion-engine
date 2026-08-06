@@ -19,7 +19,7 @@ import { OutboxRepository } from '../src/modules/conversion/domain/ports/outbox-
 import { IdempotencyRepository } from '../src/modules/conversion/domain/ports/idempotency-repository.port';
 import { Clock } from '../src/modules/shared/domain/ports/clock.port';
 import { IdGenerator } from '../src/modules/shared/domain/ports/id-generator.port';
-import { CLOCK, ID_GENERATOR } from '../src/modules/shared/tokens';
+import { CLOCK } from '../src/modules/shared/tokens';
 
 /**
  * Failure-path hardening for accept (Feature 5). Requires Postgres.
@@ -153,7 +153,17 @@ describe('Accept failure paths (integration)', () => {
     });
     const quoteId = await createQuote('15');
     const idempotencyKey = randomUUID();
-    const outboxCountBefore = await prisma.outboxMessage.count();
+    const conversionId = randomUUID();
+    const generatedIds = [conversionId, randomUUID()];
+    const idGenerator: IdGenerator = {
+      generate: () => {
+        const id = generatedIds.shift();
+        if (!id) {
+          throw new Error('Unexpected identifier generation');
+        }
+        return id;
+      },
+    };
     const realUow = app.get<UnitOfWork>(UNIT_OF_WORK);
     const failingUow: UnitOfWork = {
       execute: <T>(work: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> =>
@@ -171,7 +181,7 @@ describe('Accept failure paths (integration)', () => {
       failingUow,
       app.get<IdempotencyRepository>(IDEMPOTENCY_REPOSITORY),
       app.get<Clock>(CLOCK),
-      app.get<IdGenerator>(ID_GENERATOR),
+      idGenerator,
     );
 
     await expect(useCase.execute({ quoteId, idempotencyKey })).rejects.toThrow(
@@ -186,7 +196,7 @@ describe('Accept failure paths (integration)', () => {
     expect(String(wallet.available)).toBe('100');
     expect(String(wallet.reserved)).toBe('0');
     expect(await prisma.conversion.count({ where: { quoteId } })).toBe(0);
-    expect(await prisma.outboxMessage.count()).toBe(outboxCountBefore);
+    expect(await prisma.outboxMessage.count({ where: { aggregateId: conversionId } })).toBe(0);
     expect(await prisma.idempotencyRecord.count({ where: { idempotencyKey } })).toBe(0);
   });
 
