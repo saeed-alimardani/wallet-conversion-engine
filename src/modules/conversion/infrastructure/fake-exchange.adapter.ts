@@ -44,21 +44,25 @@ export class FakeExchangeAdapter implements ExchangeExecutionPort {
   async execute(command: ExecuteConversionCommand): Promise<ExecutionResult> {
     const mode = this.perOrderMode.get(command.clientOrderId) ?? this.defaultMode;
     const proposed = this.buildResult(command, mode);
-    const persisted = await this.prisma.fakeExchangeExecution.upsert({
+    const insertion = await this.prisma.fakeExchangeExecution.createMany({
+      data: [
+        {
+          clientOrderId: command.clientOrderId,
+          conversionId: command.conversionId,
+          userId: command.userId,
+          sourceAsset: command.sourceAsset,
+          targetAsset: command.targetAsset,
+          sourceAmount: command.sourceAmount,
+          targetAmount: command.targetAmount,
+          outcome: proposed.outcome,
+          reason: proposed.reason,
+          externalReference: proposed.externalReference!,
+        },
+      ],
+      skipDuplicates: true,
+    });
+    const persisted = await this.prisma.fakeExchangeExecution.findUniqueOrThrow({
       where: { clientOrderId: command.clientOrderId },
-      update: {},
-      create: {
-        clientOrderId: command.clientOrderId,
-        conversionId: command.conversionId,
-        userId: command.userId,
-        sourceAsset: command.sourceAsset,
-        targetAsset: command.targetAsset,
-        sourceAmount: command.sourceAmount,
-        targetAmount: command.targetAmount,
-        outcome: proposed.outcome,
-        reason: proposed.reason,
-        externalReference: proposed.externalReference!,
-      },
     });
     this.assertSameCommand(command, persisted);
 
@@ -67,10 +71,7 @@ export class FakeExchangeAdapter implements ExchangeExecutionPort {
       externalReference: persisted.externalReference,
       ...(persisted.reason === null ? {} : { reason: persisted.reason }),
     };
-    const replayed =
-      persisted.outcome !== proposed.outcome ||
-      persisted.reason !== (proposed.reason ?? null) ||
-      persisted.externalReference !== proposed.externalReference;
+    const replayed = insertion.count === 0;
     if (replayed) {
       this.logger.log({
         msg: 'fake_exchange_idempotent_replay',

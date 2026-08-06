@@ -7,24 +7,27 @@ describe('FakeExchangeAdapter', () => {
     const rows = new Map<string, Record<string, unknown>>();
     return {
       fakeExchangeExecution: {
-        upsert: jest.fn(
-          (args: { where: { clientOrderId: string }; create: Record<string, unknown> }) => {
-            const existing = rows.get(args.where.clientOrderId);
-            if (existing) {
-              return Promise.resolve(existing);
+        createMany: jest.fn(
+          (args: { data: Array<Record<string, unknown>>; skipDuplicates: boolean }) => {
+            const candidate = args.data[0];
+            const clientOrderId = String(candidate.clientOrderId);
+            const inserted = !rows.has(clientOrderId);
+            if (inserted) {
+              rows.set(clientOrderId, {
+                ...candidate,
+                reason: candidate.reason ?? null,
+                createdAt: new Date(),
+              });
             }
-            const created = {
-              ...args.create,
-              reason: args.create.reason ?? null,
-              createdAt: new Date(),
-            };
-            rows.set(args.where.clientOrderId, created);
-            return Promise.resolve(created);
+            return Promise.resolve({ count: inserted ? 1 : 0 });
           },
         ),
-        deleteMany: jest.fn(() => {
-          rows.clear();
-          return Promise.resolve({ count: 0 });
+        findUniqueOrThrow: jest.fn((args: { where: { clientOrderId: string } }) => {
+          const row = rows.get(args.where.clientOrderId);
+          if (!row) {
+            return Promise.reject(new Error('not found'));
+          }
+          return Promise.resolve(row);
         }),
       },
     } as unknown as PrismaService;
@@ -84,6 +87,13 @@ describe('FakeExchangeAdapter', () => {
 
     const afterRestart = createAdapter('FAILURE', persistence);
     expect((await afterRestart.execute(command)).outcome).toBe('SUCCESS');
+  });
+
+  it('returns one stable result to concurrent duplicate executions', async () => {
+    const adapter = createAdapter('SUCCESS');
+    const results = await Promise.all(Array.from({ length: 20 }, () => adapter.execute(command)));
+
+    expect(new Set(results.map((result) => JSON.stringify(result))).size).toBe(1);
   });
 
   it('rejects reuse of a clientOrderId for a different conversion command', async () => {
