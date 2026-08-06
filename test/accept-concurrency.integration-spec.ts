@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import request from 'supertest';
 import { App } from 'supertest/types';
@@ -21,22 +21,11 @@ describe('Accept concurrency / race conditions (integration)', () => {
   const userId = `accept-race-${randomUUID()}`;
 
   beforeAll(async () => {
-    process.env.MESSAGING_ENABLED = 'false';
-    process.env.OUTBOX_PUBLISHER_ENABLED = 'false';
-    process.env.EXECUTION_CONSUMER_ENABLED = 'false';
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
     await app.init();
     prisma = app.get(PrismaService);
 

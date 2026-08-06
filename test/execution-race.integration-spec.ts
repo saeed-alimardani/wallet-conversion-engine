@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import request from 'supertest';
 import { App } from 'supertest/types';
@@ -28,23 +28,11 @@ describe('Execution race conditions (integration)', () => {
   const userId = `exec-race-${randomUUID()}`;
 
   beforeAll(async () => {
-    process.env.MESSAGING_ENABLED = 'false';
-    process.env.OUTBOX_PUBLISHER_ENABLED = 'false';
-    process.env.EXECUTION_CONSUMER_ENABLED = 'false';
-    process.env.FAKE_EXCHANGE_MODE = 'SUCCESS';
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
     await app.init();
 
     prisma = app.get(PrismaService);

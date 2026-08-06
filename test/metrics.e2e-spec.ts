@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -36,22 +36,11 @@ describe('Observability /metrics (e2e)', () => {
   const userId = `metrics-${randomUUID()}`;
 
   beforeAll(async () => {
-    process.env.MESSAGING_ENABLED = 'false';
-    process.env.OUTBOX_PUBLISHER_ENABLED = 'false';
-    process.env.EXECUTION_CONSUMER_ENABLED = 'false';
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
     await app.init();
 
     prisma = app.get(PrismaService);

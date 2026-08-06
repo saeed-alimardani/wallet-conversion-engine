@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { Test, TestingModule } from '@nestjs/testing';
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
@@ -9,6 +9,17 @@ import { WalletAccount } from '../src/modules/wallet/domain/wallet-account';
 import { UserId } from '../src/modules/shared/domain/user-id';
 import { Money } from '../src/modules/shared/domain/money';
 import { USDT, BTC } from '../src/modules/shared/domain/asset';
+import { AcceptQuoteUseCase } from '../src/modules/conversion/application/accept-quote.use-case';
+import { IDEMPOTENCY_REPOSITORY, UNIT_OF_WORK } from '../src/modules/conversion/tokens';
+import {
+  UnitOfWork,
+  UnitOfWorkContext,
+} from '../src/modules/conversion/domain/ports/unit-of-work.port';
+import { OutboxRepository } from '../src/modules/conversion/domain/ports/outbox-repository.port';
+import { IdempotencyRepository } from '../src/modules/conversion/domain/ports/idempotency-repository.port';
+import { Clock } from '../src/modules/shared/domain/ports/clock.port';
+import { IdGenerator } from '../src/modules/shared/domain/ports/id-generator.port';
+import { CLOCK, ID_GENERATOR } from '../src/modules/shared/tokens';
 
 /**
  * Failure-path hardening for accept (Feature 5). Requires Postgres.
@@ -19,22 +30,11 @@ describe('Accept failure paths (integration)', () => {
   const userId = `accept-fail-${randomUUID()}`;
 
   beforeAll(async () => {
-    process.env.MESSAGING_ENABLED = 'false';
-    process.env.OUTBOX_PUBLISHER_ENABLED = 'false';
-    process.env.EXECUTION_CONSUMER_ENABLED = 'false';
-
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
 
     app = moduleFixture.createNestApplication();
-    app.useGlobalPipes(
-      new ValidationPipe({
-        whitelist: true,
-        forbidNonWhitelisted: true,
-        transform: true,
-      }),
-    );
     await app.init();
     prisma = app.get(PrismaService);
 
@@ -144,6 +144,50 @@ describe('Accept failure paths (integration)', () => {
       where: { userId_asset: { userId, asset: 'USDT' } },
     });
     expect(Number(wallet.reserved)).toBe(0);
+  });
+
+  it('rolls back every accept write when outbox persistence fails', async () => {
+    await prisma.walletAccount.update({
+      where: { userId_asset: { userId, asset: 'USDT' } },
+      data: { balance: '100', available: '100', reserved: '0' },
+    });
+    const quoteId = await createQuote('15');
+    const idempotencyKey = randomUUID();
+    const outboxCountBefore = await prisma.outboxMessage.count();
+    const realUow = app.get<UnitOfWork>(UNIT_OF_WORK);
+    const failingUow: UnitOfWork = {
+      execute: <T>(work: (ctx: UnitOfWorkContext) => Promise<T>): Promise<T> =>
+        realUow.execute((ctx) => {
+          const outbox: OutboxRepository = {
+            enqueue: () => Promise.reject(new Error('forced outbox persistence failure')),
+            findUnpublished: (limit) => ctx.outbox.findUnpublished(limit),
+            markPublished: (id, publishedAt) => ctx.outbox.markPublished(id, publishedAt),
+            countUnpublished: () => ctx.outbox.countUnpublished(),
+          };
+          return work({ ...ctx, outbox });
+        }),
+    };
+    const useCase = new AcceptQuoteUseCase(
+      failingUow,
+      app.get<IdempotencyRepository>(IDEMPOTENCY_REPOSITORY),
+      app.get<Clock>(CLOCK),
+      app.get<IdGenerator>(ID_GENERATOR),
+    );
+
+    await expect(useCase.execute({ quoteId, idempotencyKey })).rejects.toThrow(
+      'forced outbox persistence failure',
+    );
+
+    const quote = await prisma.quote.findUniqueOrThrow({ where: { id: quoteId } });
+    const wallet = await prisma.walletAccount.findUniqueOrThrow({
+      where: { userId_asset: { userId, asset: 'USDT' } },
+    });
+    expect(quote).toMatchObject({ status: 'ACTIVE', acceptedAt: null });
+    expect(String(wallet.available)).toBe('100');
+    expect(String(wallet.reserved)).toBe('0');
+    expect(await prisma.conversion.count({ where: { quoteId } })).toBe(0);
+    expect(await prisma.outboxMessage.count()).toBe(outboxCountBefore);
+    expect(await prisma.idempotencyRecord.count({ where: { idempotencyKey } })).toBe(0);
   });
 
   it('returns 409 QUOTE_ALREADY_ACCEPTED for a second distinct idempotency key', async () => {

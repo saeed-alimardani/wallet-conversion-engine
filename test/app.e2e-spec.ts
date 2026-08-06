@@ -1,6 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
+import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 
 /**
@@ -25,7 +26,7 @@ describe('Health (e2e)', () => {
   });
 
   it('GET /health reports the database is up', async () => {
-    const response = await request(app.getHttpServer()).get('/health');
+    const response = await request(app.getHttpServer() as App).get('/health');
     expect(response.status).toBe(200);
     expect(response.body).toEqual({ status: 'ok', database: 'up' });
   });
