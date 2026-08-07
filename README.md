@@ -113,7 +113,8 @@ for poison messages.
 
 Diagrams and deeper design: [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md),
 [`docs/DOMAIN_MODEL.md`](./docs/DOMAIN_MODEL.md), [`docs/DECISIONS.md`](./docs/DECISIONS.md),
-[`docs/FAILURE_SCENARIOS.md`](./docs/FAILURE_SCENARIOS.md), and
+[`docs/FAILURE_SCENARIOS.md`](./docs/FAILURE_SCENARIOS.md),
+[`docs/END_TO_END_FLOW.md`](./docs/END_TO_END_FLOW.md) (worked example walkthrough), and
 [`docs/INTERVIEW_ANSWERS.md`](./docs/INTERVIEW_ANSWERS.md).
 
 ---
